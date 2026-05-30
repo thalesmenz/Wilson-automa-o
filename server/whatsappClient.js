@@ -12,6 +12,8 @@ import QRCode from 'qrcode';
 
 const logger = P({ level: process.env.LOG_LEVEL || 'silent' });
 const RESPOND_TO_GROUPS = process.env.WHATSAPP_RESPOND_TO_GROUPS === 'true';
+const configuredDebounceMs = Number(process.env.AUTO_REPLY_DEBOUNCE_MS || 20000);
+const AUTO_REPLY_DEBOUNCE_MS = Number.isFinite(configuredDebounceMs) ? configuredDebounceMs : 20000;
 
 const DEFAULT_AUTO_REPLY = {
   id: 'default-auto-reply',
@@ -303,6 +305,7 @@ export class WhatsAppClient extends EventEmitter {
     this.reconnectTimer = null;
     this.cooldowns = new Map();
     this.defaultReply = DEFAULT_AUTO_REPLY;
+    this.pendingReplies = new Map();
     this.scheduling = new Map();
   }
 
@@ -530,9 +533,82 @@ export class WhatsAppClient extends EventEmitter {
         continue;
       }
 
-      const automation = await this.createReply(text, isGroup, jid, contactName);
+      this.queueAutoReply({ contactName, isGroup, jid, message, text });
+    }
+  }
+
+  queueAutoReply({ contactName, isGroup, jid, message, text }) {
+    const current = this.pendingReplies.get(jid);
+    if (current?.timer) {
+      clearTimeout(current.timer);
+    }
+
+    const pending = {
+      contactName,
+      isGroup,
+      messages: [
+        ...(current?.messages || []),
+        {
+          contactName,
+          isGroup,
+          message,
+          text,
+        },
+      ],
+      processing: Boolean(current?.processing),
+      timer: null,
+    };
+
+    if (!pending.processing) {
+      pending.timer = setTimeout(() => {
+        this.flushPendingReply(jid).catch((error) => {
+          this.emitActivity('error', 'Falha ao processar mensagens agrupadas.', { error: error.message, jid });
+        });
+      }, Math.max(0, AUTO_REPLY_DEBOUNCE_MS));
+    }
+
+    this.pendingReplies.set(jid, pending);
+  }
+
+  async flushPendingReply(jid) {
+    const pending = this.pendingReplies.get(jid);
+    if (!pending || pending.processing || !pending.messages.length) {
+      return;
+    }
+
+    const batch = pending.messages;
+    const lastMessage = batch[batch.length - 1];
+
+    this.pendingReplies.set(jid, {
+      ...pending,
+      messages: [],
+      processing: true,
+      timer: null,
+    });
+
+    try {
+      const text = batch.map((item) => item.text).join('\n').trim();
+      const automation = await this.createReply(text, lastMessage.isGroup, jid, lastMessage.contactName);
+
       if (automation) {
-        await this.replyWithAutomation(jid, message, automation, contactName);
+        await this.replyWithAutomation(jid, lastMessage.message, automation, lastMessage.contactName);
+      }
+    } finally {
+      const latest = this.pendingReplies.get(jid);
+      if (!latest) {
+        return;
+      }
+
+      if (latest.messages.length) {
+        latest.processing = false;
+        latest.timer = setTimeout(() => {
+          this.flushPendingReply(jid).catch((error) => {
+            this.emitActivity('error', 'Falha ao processar mensagens agrupadas.', { error: error.message, jid });
+          });
+        }, Math.max(0, AUTO_REPLY_DEBOUNCE_MS));
+        this.pendingReplies.set(jid, latest);
+      } else {
+        this.pendingReplies.delete(jid);
       }
     }
   }

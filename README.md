@@ -26,12 +26,14 @@ WHATSAPP_RESPOND_TO_GROUPS=false
 ## Resposta automatica
 
 Com `GEMINI_API_KEY` configurada, toda mensagem privada recebida passa pelo Gemini antes de ser respondida.
+Mensagens seguidas do mesmo contato sao agrupadas por 20 segundos antes da resposta, para evitar varias respostas quando o cliente manda textos quebrados. Ajuste com `AUTO_REPLY_DEBOUNCE_MS`.
 
 Crie um `.env` com:
 
 ```bash
 GEMINI_API_KEY=sua_chave_aqui
 GEMINI_MODEL=gemini-2.5-flash
+AUTO_REPLY_DEBOUNCE_MS=20000
 ```
 
 Sem chave do Gemini, o bot usa o fallback:
