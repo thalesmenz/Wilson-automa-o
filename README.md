@@ -40,7 +40,7 @@ Sem chave do Gemini, o bot usa o fallback:
 Ola! Recebemos sua mensagem. Ja vamos te responder.
 ```
 
-Para trocar o fallback, ajuste `AUTO_REPLY_TEXT`. Para mudar a personalidade da IA, ajuste `GEMINI_SYSTEM_PROMPT`.
+Para trocar o fallback, ajuste `AUTO_REPLY_TEXT`. A personalidade e as regras comerciais da IA ficam versionadas no codigo em [server/geminiClient.js](/Users/thalesmenzner/Documents/contabsquad/server/geminiClient.js).
 
 ## Fluxo comercial
 
@@ -75,7 +75,7 @@ GOOGLE_CALENDAR_TIME_ZONE=America/Sao_Paulo
 GOOGLE_CALENDAR_EVENT_DURATION_MINUTES=30
 ```
 
-Depois suba o app, clique em `Conectar Google` na dashboard e aceite o acesso ao Google Agenda. O token fica salvo localmente em `.secrets/`, que nao entra no Git. No Render, use variaveis de ambiente com o refresh token para nao depender do filesystem.
+Depois suba o app, clique em `Conectar Google` na dashboard e aceite o acesso ao Google Agenda. O token fica salvo localmente em `.secrets/`, que nao entra no Git. No Render, use Render Disk e configure `GOOGLE_OAUTH_TOKEN_DIR=/var/data/secrets` para nao perder os tokens em restart/deploy.
 
 Se quiser duas contas diferentes, conecte uma por lead type usando as URLs:
 
@@ -136,10 +136,19 @@ Se o servidor reiniciar, os agendamentos continuam no Supabase. Se o WhatsApp es
 
 ## Dados locais
 
-- Sessao do WhatsApp: `server/sessions/`.
-- Conversas recentes: `server/data/`.
+- Sessao do WhatsApp: `WHATSAPP_SESSION_DIR` ou `server/sessions/baileys`.
+- Preferencias do painel: `APP_SETTINGS_PATH` ou `server/data/settings.json`.
+- Conversas recentes locais: `server/data/`.
 
 Essas pastas ficam fora do Git para evitar subir credenciais e historico local.
+
+No Render, adicione um Disk e use caminhos persistentes:
+
+```bash
+WHATSAPP_SESSION_DIR=/var/data/baileys
+GOOGLE_OAUTH_TOKEN_DIR=/var/data/secrets
+APP_SETTINGS_PATH=/var/data/settings.json
+```
 
 ## Observacao
 

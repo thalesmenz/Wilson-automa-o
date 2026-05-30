@@ -19,7 +19,12 @@ const __dirname = path.dirname(__filename);
 const rootDir = path.join(__dirname, '..');
 const port = Number(process.env.PORT || 3001);
 const clientOrigin = process.env.CLIENT_ORIGIN || 'http://localhost:5173';
-const settingsPath = path.join(__dirname, 'data', 'settings.json');
+const settingsPath = process.env.APP_SETTINGS_PATH
+  ? path.resolve(process.env.APP_SETTINGS_PATH)
+  : path.join(__dirname, 'data', 'settings.json');
+const whatsappSessionDir = process.env.WHATSAPP_SESSION_DIR
+  ? path.resolve(process.env.WHATSAPP_SESSION_DIR)
+  : path.join(__dirname, 'sessions', 'baileys');
 
 async function readSettings() {
   try {
@@ -61,7 +66,7 @@ const calendar = new GoogleCalendarClient();
 const gemini = new GeminiClient();
 const whatsapp = new WhatsAppClient({
   appointmentStore,
-  authDir: path.join(__dirname, 'sessions', 'baileys'),
+  authDir: whatsappSessionDir,
   calendar,
   gemini,
   store,

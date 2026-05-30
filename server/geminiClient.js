@@ -39,7 +39,7 @@ export class GeminiClient {
     apiKey = process.env.GEMINI_API_KEY,
     model = process.env.GEMINI_MODEL || 'gemini-2.5-flash',
     enabled = process.env.GEMINI_ENABLED !== 'false',
-    systemPrompt = process.env.GEMINI_SYSTEM_PROMPT || DEFAULT_SYSTEM_PROMPT,
+    systemPrompt = DEFAULT_SYSTEM_PROMPT,
   } = {}) {
     this.apiKey = apiKey;
     this.model = String(model || 'gemini-2.5-flash').replace(/^models\//, '');
