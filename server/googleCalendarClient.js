@@ -422,4 +422,25 @@ export class GoogleCalendarClient {
       title: result.data.summary || title,
     };
   }
+
+  async cancelMeeting({ calendarId, eventId, leadType }) {
+    if (!eventId) {
+      throw new Error('Evento do Google Agenda nao informado.');
+    }
+
+    const calendar = this.getCalendar(leadType);
+    const targetCalendarId = calendarId || this.getCalendarId(leadType);
+
+    await calendar.events.delete({
+      calendarId: targetCalendarId,
+      eventId,
+      sendUpdates: 'all',
+    });
+
+    return {
+      calendarId: targetCalendarId,
+      eventId,
+      leadType,
+    };
+  }
 }

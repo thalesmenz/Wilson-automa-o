@@ -173,6 +173,49 @@ export class AppointmentStore {
     });
   }
 
+  async findNextScheduledAppointmentByJid(jid, now = new Date()) {
+    if (!this.isReady || !jid) {
+      return null;
+    }
+
+    const { data, error } = await this.getClient()
+      .from(this.table)
+      .select('*')
+      .eq('jid', jid)
+      .eq('status', 'scheduled')
+      .gte('start_datetime', now.toISOString())
+      .order('start_datetime', { ascending: true })
+      .limit(1);
+
+    if (error) {
+      throw error;
+    }
+
+    return data?.[0] ? fromAppointmentRow(data[0]) : null;
+  }
+
+  async markCancelled(id, cancelledAt = new Date()) {
+    if (!this.isReady || !id) {
+      return null;
+    }
+
+    const { data, error } = await this.getClient()
+      .from(this.table)
+      .update({
+        status: 'cancelled',
+        updated_at: cancelledAt.toISOString(),
+      })
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) {
+      throw error;
+    }
+
+    return fromAppointmentRow(data);
+  }
+
   async markReminderSent(id, type, sentAt = new Date()) {
     if (!this.isReady) {
       return null;

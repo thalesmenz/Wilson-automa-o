@@ -40,6 +40,7 @@ const LEAD_TYPE_LABELS = {
 };
 
 const LEAD_ROUTES = {
+  cancelled: 'Cancelado',
   discarded: 'Descartado',
   high_ticket: 'Wilson',
   low_ticket: 'Andre',
@@ -113,6 +114,11 @@ function getUserFriendlyDisconnectMessage(code, fallback) {
   return fallback || 'Conexao encerrada.';
 }
 
+function isCalendarMissingError(error) {
+  const status = Number(error?.code || error?.response?.status || error?.status);
+  return status === 404 || status === 410;
+}
+
 function isConfirmation(text) {
   return /^(sim|s|pode|pode sim|pode seguir|aceito|aceito sim|confirmo|confirmado|ok|fechado|manda|marcar)$/i.test(
     normalizeText(text),
@@ -122,6 +128,15 @@ function isConfirmation(text) {
 function isCancellation(text) {
   return /^(nao|n|nao quero|nao quero pagar|nao vou pagar|sem pagar|gratis|gratuito|caro|cancela|cancelar|deixa|deixa pra la)$/i.test(
     normalizeText(text),
+  );
+}
+
+function isAppointmentCancellation(text) {
+  const normalized = normalizeText(text);
+  return (
+    /\b(cancelar|cancela|cancele|cancelamento|desmarcar|desmarca|desmarque)\b/.test(normalized) ||
+    /\bnao (vou|consigo|posso) (ir|comparecer|participar)\b/.test(normalized) ||
+    /\bnao vai dar\b/.test(normalized)
   );
 }
 
@@ -157,6 +172,10 @@ function isDiscardedLead(value) {
 function getLeadEventType(status, leadType) {
   if (status === 'meeting_created') {
     return 'meeting_created';
+  }
+
+  if (status === 'cancelled') {
+    return 'meeting_cancelled';
   }
 
   if (status === 'discarded') {
@@ -729,6 +748,10 @@ export class WhatsAppClient extends EventEmitter {
       }
     }
 
+    if (!current && isAppointmentCancellation(text)) {
+      return this.cancelScheduledMeeting({ contactName, jid });
+    }
+
     if (current?.status === 'awaiting_confirmation') {
       if (isConfirmation(text)) {
         return this.confirmScheduledMeeting({ contactName, jid });
@@ -836,6 +859,10 @@ export class WhatsAppClient extends EventEmitter {
         name: 'Agenda',
         response: 'Tudo bem, cancelei esse agendamento por aqui.',
       };
+    }
+
+    if (analysis.intent === 'cancel' && !current && Number(analysis.confidence || 0) >= 0.65) {
+      return this.cancelScheduledMeeting({ contactName, jid });
     }
 
     if (analysis.intent === 'confirm' && current?.status === 'awaiting_confirmation') {
@@ -946,6 +973,98 @@ export class WhatsAppClient extends EventEmitter {
       name: 'Agenda',
       response: buildConfirmationMessage(data),
     };
+  }
+
+  async cancelScheduledMeeting({ contactName, jid }) {
+    if (!this.appointmentStore?.isReady || !this.appointmentStore.findNextScheduledAppointmentByJid) {
+      return {
+        ...this.defaultReply,
+        name: 'Agenda',
+        response:
+          'Nao consegui consultar os agendamentos agora. Vou encaminhar para um atendente desmarcar manualmente.',
+      };
+    }
+
+    let appointment;
+    try {
+      appointment = await this.appointmentStore.findNextScheduledAppointmentByJid(jid);
+    } catch (error) {
+      this.emitActivity('error', 'Falha ao buscar agendamento para cancelamento.', { error: error.message, jid });
+      return {
+        ...this.defaultReply,
+        name: 'Agenda',
+        response:
+          'Nao consegui consultar seu agendamento agora. Vou encaminhar para um atendente desmarcar manualmente.',
+      };
+    }
+
+    if (!appointment) {
+      return {
+        ...this.defaultReply,
+        name: 'Agenda',
+        response: 'Nao encontrei nenhum agendamento futuro para desmarcar nesse WhatsApp.',
+      };
+    }
+
+    if (!this.calendar?.isReady) {
+      return {
+        ...this.defaultReply,
+        name: 'Agenda',
+        response:
+          'Encontrei seu agendamento, mas o Google Agenda nao esta conectado agora. Vou encaminhar para um atendente desmarcar manualmente.',
+      };
+    }
+
+    try {
+      try {
+        await this.calendar.cancelMeeting({
+          calendarId: appointment.calendarId,
+          eventId: appointment.eventId,
+          leadType: appointment.leadType,
+        });
+      } catch (error) {
+        if (!isCalendarMissingError(error)) {
+          throw error;
+        }
+
+        this.emitActivity('calendar', 'Evento ja nao existia no Google Agenda. Marcando como cancelado.', {
+          calendarId: appointment.calendarId,
+          eventId: appointment.eventId,
+          jid,
+        });
+      }
+
+      await this.appointmentStore.markCancelled(appointment.id);
+      await this.recordLeadStatus({
+        calendarId: appointment.calendarId,
+        contactName,
+        eventId: appointment.eventId,
+        jid,
+        leadType: appointment.leadType,
+        meetingAt: appointment.startDateTime,
+        reason: 'Cliente pediu para desmarcar pelo WhatsApp.',
+        status: 'cancelled',
+      });
+      this.emitActivity('calendar', 'Reuniao cancelada no Google Agenda.', {
+        calendarId: appointment.calendarId,
+        eventId: appointment.eventId,
+        jid,
+      });
+
+      return {
+        ...this.defaultReply,
+        name: 'Google Agenda',
+        response: 'Pronto, desmarquei sua analise na agenda. Se quiser remarcar outro horario, e so me mandar.',
+      };
+    } catch (error) {
+      this.emitActivity('error', 'Falha ao cancelar evento no Google Agenda.', { error: error.message, jid });
+      return {
+        ...this.defaultReply,
+        name: 'Google Agenda',
+        response:
+          'Tentei desmarcar no Google Agenda, mas deu erro na integracao. Vou encaminhar para um atendente cancelar manualmente.',
+      };
+    }
   }
 
   async confirmScheduledMeeting({ contactName, jid }) {

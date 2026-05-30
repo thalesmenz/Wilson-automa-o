@@ -54,6 +54,7 @@ O bot atende de forma formal e direta para reintegracao de credito e regularizac
 - Quem nao aceita pagar a analise e classificado como curioso/descartado e nao vai para agenda.
 - O bot nao promete limpeza garantida, prazo fechado, aprovacao de credito ou financiamento antes da analise.
 - Para marcar, o cliente precisa aceitar a analise paga e informar data, horario e email do convite.
+- Se o cliente pedir para cancelar/desmarcar depois de agendado, o bot cancela o proximo agendamento futuro no Google Agenda e marca como `cancelled` no Supabase.
 
 ## Google Agenda
 
