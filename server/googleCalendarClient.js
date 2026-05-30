@@ -365,7 +365,7 @@ export class GoogleCalendarClient {
     durationMinutes = 30,
     leadType,
     startDateTime,
-    title = 'Reuniao ContabSquad',
+    title = 'Reuniao Wilson Sanches',
   }) {
     const calendar = this.getCalendar(leadType);
     const targetCalendarId = this.getCalendarId(leadType);

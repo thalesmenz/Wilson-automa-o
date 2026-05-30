@@ -190,7 +190,7 @@ function mergeScheduleData(current = {}, next = {}) {
     leadType,
     paymentAmount: ANALYSIS_FEES[leadType] || Number(next?.paymentAmount || current.paymentAmount || 0) || null,
     qualificationQuestion: next?.qualificationQuestion || next?.question || current.qualificationQuestion,
-    title: next?.title || current.title || 'Analise de credito ContabSquad',
+    title: next?.title || current.title || 'Analise de credito Wilson Sanches',
   });
 }
 
@@ -274,7 +274,7 @@ function buildConfirmationMessage(data) {
 
 function buildCalendarDescription({ contactName, jid, leadType, notes }) {
   return [
-    'Analise marcada automaticamente pelo WhatsApp Bot da ContabSquad.',
+    'Analise marcada automaticamente pelo WhatsApp Bot Wilson Sanches.',
     `Contato: ${contactName || jid}`,
     `WhatsApp JID: ${jid}`,
     `Tipo de atendimento: ${LEAD_TYPE_LABELS[normalizeLeadType(leadType)]}`,
@@ -645,7 +645,7 @@ export class WhatsAppClient extends EventEmitter {
             durationMinutes: DEFAULT_MEETING_DURATION_MINUTES,
             leadType: savedLeadType,
             paymentAmount: ANALYSIS_FEES[savedLeadType],
-            title: 'Analise de credito ContabSquad',
+            title: 'Analise de credito Wilson Sanches',
           },
           status: 'awaiting_details',
           updatedAt: savedLead.updatedAt || new Date().toISOString(),
@@ -891,7 +891,7 @@ export class WhatsAppClient extends EventEmitter {
         durationMinutes: current.data.durationMinutes || DEFAULT_MEETING_DURATION_MINUTES,
         leadType: current.data.leadType,
         startDateTime: current.data.startDateTime,
-        title: current.data.title || 'Analise de credito ContabSquad',
+        title: current.data.title || 'Analise de credito Wilson Sanches',
       });
 
       this.scheduling.delete(jid);

@@ -586,7 +586,7 @@ export default function App() {
             <Bot size={22} />
           </span>
           <div>
-            <strong>ContabSquad</strong>
+            <strong>Wilson Sanches</strong>
           </div>
         </div>
 

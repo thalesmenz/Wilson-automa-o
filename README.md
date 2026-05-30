@@ -1,4 +1,4 @@
-# WhatsApp Bot ContabSquad
+# WhatsApp Bot Wilson Sanches
 
 Aplicacao full-stack com React/Vite no front e Express no backend. A tela e simples: gerar QR Code, escanear no WhatsApp e deixar o bot respondendo automaticamente.
 

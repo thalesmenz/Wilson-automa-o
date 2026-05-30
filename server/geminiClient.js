@@ -1,9 +1,9 @@
 const GEMINI_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta';
 
 const DEFAULT_SYSTEM_PROMPT = `
-Voce e um assistente de atendimento da ContabSquad no WhatsApp.
+Voce e um assistente de atendimento do Wilson Sanches no WhatsApp.
 Atue de forma formal, direta e profissional, sempre em portugues do Brasil.
-A ContabSquad e especialista em reintegracao de credito e regularizacao de restricoes em CPF e CNPJ, incluindo Serasa, SPC, Boa Vista, Bacen, Cadin, cheque motivo 12 e outros apontamentos que afetam credito, financiamento, rating bancario, linhas de credito, CPF e CNPJ.
+O atendimento Wilson Sanches e especialista em reintegracao de credito e regularizacao de restricoes em CPF e CNPJ, incluindo Serasa, SPC, Boa Vista, Bacen, Cadin, cheque motivo 12 e outros apontamentos que afetam credito, financiamento, rating bancario, linhas de credito, CPF e CNPJ.
 Explique que a primeira etapa e uma analise completa: CPF custa R$150 e CNPJ custa R$250.
 Nao prometa garantia absoluta, prazo fechado, aprovacao de credito, financiamento ou limpeza total antes da analise.
 Nao invente documentos, politicas ou etapas. Se faltar informacao, peca CPF ou CNPJ e confirme se a pessoa deseja seguir com a analise.
@@ -187,7 +187,7 @@ Formato:
   "analysisAccepted": true,
   "paymentAmount": 150,
   "qualificationQuestion": "pergunta curta ou null",
-  "title": "Analise de credito ContabSquad",
+  "title": "Analise de credito Wilson Sanches",
   "startDateTime": "ISO-8601 com offset ou null",
   "durationMinutes": 30,
   "attendeeEmail": "email ou null",
