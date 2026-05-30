@@ -47,6 +47,7 @@ const LEAD_ROUTES = {
   meeting_created: 'Agenda',
   new: 'Aguardando',
 };
+const WEEKDAY_LABELS = ['domingo', 'segunda', 'terca', 'quarta', 'quinta', 'sexta', 'sabado'];
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -257,8 +258,76 @@ function formatMeetingDate(value) {
   }).format(new Date(value));
 }
 
+function getSlotParts(value) {
+  const parts = new Intl.DateTimeFormat('pt-BR', {
+    day: '2-digit',
+    hour: '2-digit',
+    hour12: false,
+    minute: '2-digit',
+    month: '2-digit',
+    timeZone: GOOGLE_CALENDAR_TIME_ZONE,
+    weekday: 'long',
+  }).formatToParts(new Date(value));
+  const lookup = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+
+  return {
+    day: lookup.day,
+    hour: lookup.hour,
+    minute: lookup.minute,
+    month: lookup.month,
+    weekday: normalizeText(lookup.weekday),
+  };
+}
+
+function formatAvailableSlot(slot) {
+  const parts = getSlotParts(slot.startDateTime);
+  const weekday = WEEKDAY_LABELS.find((label) => normalizeText(label) === parts.weekday) || parts.weekday;
+  return `${weekday}, ${parts.day}/${parts.month} as ${parts.hour}:${parts.minute}`;
+}
+
 function buildMissingScheduleMessage(missing) {
   return `Perfeito. Para seguir, me envie ${formatPtList(missing)} para eu criar o convite no Google Agenda.`;
+}
+
+function buildAvailableSlotsMessage(slots, missing) {
+  if (!slots.length) {
+    return buildMissingScheduleMessage(missing);
+  }
+
+  const options = slots.map((slot, index) => `${index + 1}) ${formatAvailableSlot(slot)}`).join('\n');
+  const emailLine = missing.includes('email') ? 'Me diga qual opcao prefere e envie seu email para o convite.' : 'Me diga qual opcao prefere.';
+  return `Tenho estes horarios disponiveis:\n${options}\n${emailLine}`;
+}
+
+function findSelectedAvailableSlot(text, slots = []) {
+  if (!slots.length) {
+    return null;
+  }
+
+  const normalized = normalizeText(text);
+  const selectedIndex =
+    [
+      /\b(?:opcao\s*)?1\b/,
+      /\b(?:opcao\s*)?2\b/,
+      /\b(?:opcao\s*)?3\b/,
+      /\b(?:opcao\s*)?4\b/,
+      /\b(?:opcao\s*)?5\b/,
+    ].findIndex((pattern) => pattern.test(normalized));
+
+  if (selectedIndex >= 0 && slots[selectedIndex]) {
+    return slots[selectedIndex];
+  }
+
+  const wordMap = [
+    ['primeiro', 'primeira'],
+    ['segundo'],
+    ['terceiro'],
+    ['quarto'],
+    ['quinto'],
+  ];
+  const wordIndex = wordMap.findIndex((words) => words.some((word) => normalized.includes(word)));
+
+  return wordIndex >= 0 ? slots[wordIndex] || null : null;
 }
 
 function buildQualificationMessage(data) {
@@ -723,6 +792,45 @@ export class WhatsAppClient extends EventEmitter {
     }
   }
 
+  async createMissingDetailsReply({ data, jid, missing }) {
+    let nextData = data;
+    let response = buildMissingScheduleMessage(missing);
+
+    if (missing.includes('data e horario') && this.calendar?.isReady) {
+      try {
+        const availableSlots = await this.calendar.listAvailableSlots({
+          durationMinutes: data.durationMinutes || DEFAULT_MEETING_DURATION_MINUTES,
+          leadType: data.leadType,
+        });
+
+        if (availableSlots.length) {
+          nextData = {
+            ...data,
+            availableSlots,
+          };
+          response = buildAvailableSlotsMessage(availableSlots, missing);
+        } else {
+          response =
+            'Nao encontrei horarios livres nos proximos dias. Me envie uma sugestao de data e horario para eu verificar.';
+        }
+      } catch (error) {
+        this.emitActivity('error', 'Falha ao buscar horarios disponiveis.', { error: error.message, jid });
+      }
+    }
+
+    this.scheduling.set(jid, {
+      data: nextData,
+      status: 'awaiting_details',
+      updatedAt: new Date().toISOString(),
+    });
+
+    return {
+      ...this.defaultReply,
+      name: 'Agenda',
+      response,
+    };
+  }
+
   async createSchedulingReply({ contactName, isGroup, jid, text }) {
     if (isGroup) {
       return null;
@@ -745,6 +853,21 @@ export class WhatsAppClient extends EventEmitter {
           status: 'awaiting_details',
           updatedAt: savedLead.updatedAt || new Date().toISOString(),
         };
+      }
+    }
+
+    if (current?.status === 'awaiting_details') {
+      const selectedSlot = findSelectedAvailableSlot(text, current.data?.availableSlots);
+      if (selectedSlot) {
+        current = {
+          ...current,
+          data: {
+            ...current.data,
+            startDateTime: selectedSlot.startDateTime,
+          },
+          updatedAt: new Date().toISOString(),
+        };
+        this.scheduling.set(jid, current);
       }
     }
 
@@ -807,17 +930,7 @@ export class WhatsAppClient extends EventEmitter {
 
         const missing = getScheduleMissing(data);
         if (missing.length) {
-          this.scheduling.set(jid, {
-            data,
-            status: 'awaiting_details',
-            updatedAt: new Date().toISOString(),
-          });
-
-          return {
-            ...this.defaultReply,
-            name: 'Agenda',
-            response: buildMissingScheduleMessage(missing),
-          };
+          return this.createMissingDetailsReply({ data, jid, missing });
         }
 
         this.scheduling.set(jid, {
@@ -949,17 +1062,7 @@ export class WhatsAppClient extends EventEmitter {
     const missing = getScheduleMissing(data);
 
     if (missing.length) {
-      this.scheduling.set(jid, {
-        data,
-        status: 'awaiting_details',
-        updatedAt: new Date().toISOString(),
-      });
-
-      return {
-        ...this.defaultReply,
-        name: 'Agenda',
-        response: buildMissingScheduleMessage(missing),
-      };
+      return this.createMissingDetailsReply({ data, jid, missing });
     }
 
     this.scheduling.set(jid, {

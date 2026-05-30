@@ -6,6 +6,13 @@ import { google } from 'googleapis';
 
 const CALENDAR_SCOPES = ['https://www.googleapis.com/auth/calendar.events'];
 const OAUTH_LEAD_TYPES = ['default', 'low_ticket', 'high_ticket'];
+const DEFAULT_AVAILABILITY_LOOKAHEAD_DAYS = Number(process.env.GOOGLE_CALENDAR_AVAILABILITY_LOOKAHEAD_DAYS || 7);
+const DEFAULT_AVAILABILITY_MAX_SLOTS = Number(process.env.GOOGLE_CALENDAR_AVAILABILITY_MAX_SLOTS || 4);
+const DEFAULT_AVAILABILITY_STEP_MINUTES = Number(process.env.GOOGLE_CALENDAR_AVAILABILITY_STEP_MINUTES || 30);
+const DEFAULT_AVAILABILITY_MIN_NOTICE_MINUTES = Number(process.env.GOOGLE_CALENDAR_MIN_NOTICE_MINUTES || 60);
+const DEFAULT_AVAILABILITY_START_TIME = process.env.GOOGLE_CALENDAR_WORKDAY_START || '09:00';
+const DEFAULT_AVAILABILITY_END_TIME = process.env.GOOGLE_CALENDAR_WORKDAY_END || '18:00';
+const DEFAULT_AVAILABILITY_WORKDAYS = process.env.GOOGLE_CALENDAR_WORKDAYS || '1,2,3,4,5';
 
 function normalizePrivateKey(value) {
   return String(value || '').replace(/\\n/g, '\n').trim();
@@ -78,6 +85,73 @@ function addMinutes(date, minutes) {
   return new Date(date.getTime() + Number(minutes || 30) * 60 * 1000);
 }
 
+function addDays(date, days) {
+  return new Date(date.getTime() + Number(days || 0) * 24 * 60 * 60 * 1000);
+}
+
+function parseClock(value, fallback) {
+  const [hour, minute] = String(value || fallback || '09:00')
+    .split(':')
+    .map((item) => Number(item));
+
+  return {
+    hour: Number.isFinite(hour) ? hour : 9,
+    minute: Number.isFinite(minute) ? minute : 0,
+  };
+}
+
+function parseWorkdays(value) {
+  return new Set(
+    String(value || DEFAULT_AVAILABILITY_WORKDAYS)
+      .split(',')
+      .map((item) => Number(item.trim()))
+      .filter((item) => Number.isInteger(item) && item >= 0 && item <= 6),
+  );
+}
+
+function getTimeZoneParts(date, timeZone) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    day: '2-digit',
+    hour: '2-digit',
+    hour12: false,
+    minute: '2-digit',
+    month: '2-digit',
+    second: '2-digit',
+    timeZone,
+    weekday: 'short',
+    year: 'numeric',
+  }).formatToParts(date);
+  const lookup = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+
+  return {
+    day: Number(lookup.day),
+    hour: Number(lookup.hour === '24' ? 0 : lookup.hour),
+    minute: Number(lookup.minute),
+    month: Number(lookup.month),
+    second: Number(lookup.second),
+    weekday: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(lookup.weekday),
+    year: Number(lookup.year),
+  };
+}
+
+function zonedTimeToUtc({ day, hour = 0, minute = 0, month, second = 0, year }, timeZone) {
+  const guess = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
+  const parts = getTimeZoneParts(guess, timeZone);
+  const localAsUtc = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second);
+  const targetAsUtc = Date.UTC(year, month - 1, day, hour, minute, second);
+
+  return new Date(guess.getTime() + targetAsUtc - localAsUtc);
+}
+
+function roundUpDate(date, stepMinutes) {
+  const stepMs = Math.max(1, Number(stepMinutes || 30)) * 60 * 1000;
+  return new Date(Math.ceil(date.getTime() / stepMs) * stepMs);
+}
+
+function eventsOverlap(startA, endA, startB, endB) {
+  return startA < endB && endA > startB;
+}
+
 function getMeetLink(event) {
   return (
     event?.hangoutLink ||
@@ -123,6 +197,15 @@ export class GoogleCalendarClient {
     };
     this.privateKey = normalizePrivateKey(privateKey || serviceAccount?.private_key);
     this.timeZone = timeZone;
+    this.availability = {
+      endTime: DEFAULT_AVAILABILITY_END_TIME,
+      lookaheadDays: DEFAULT_AVAILABILITY_LOOKAHEAD_DAYS,
+      maxSlots: DEFAULT_AVAILABILITY_MAX_SLOTS,
+      minNoticeMinutes: DEFAULT_AVAILABILITY_MIN_NOTICE_MINUTES,
+      startTime: DEFAULT_AVAILABILITY_START_TIME,
+      stepMinutes: DEFAULT_AVAILABILITY_STEP_MINUTES,
+      workdays: parseWorkdays(DEFAULT_AVAILABILITY_WORKDAYS),
+    };
     this.calendar = new Map();
   }
 
@@ -421,6 +504,86 @@ export class GoogleCalendarClient {
       startDateTime: result.data.start?.dateTime || start.toISOString(),
       title: result.data.summary || title,
     };
+  }
+
+  async listAvailableSlots({
+    durationMinutes = Number(process.env.GOOGLE_CALENDAR_EVENT_DURATION_MINUTES || 30),
+    leadType,
+    lookaheadDays = this.availability.lookaheadDays,
+    maxSlots = this.availability.maxSlots,
+    now = new Date(),
+  } = {}) {
+    const calendar = this.getCalendar(leadType);
+    const calendarId = this.getCalendarId(leadType);
+    const durationMs = Number(durationMinutes || 30) * 60 * 1000;
+    const minStart = addMinutes(now, this.availability.minNoticeMinutes);
+    const searchEnd = addDays(now, lookaheadDays);
+    const result = await calendar.events.list({
+      calendarId,
+      maxResults: 250,
+      orderBy: 'startTime',
+      showDeleted: false,
+      singleEvents: true,
+      timeMax: searchEnd.toISOString(),
+      timeMin: now.toISOString(),
+    });
+    const busy = (result.data.items || [])
+      .map((event) => ({
+        end: new Date(event.end?.dateTime || event.end?.date),
+        start: new Date(event.start?.dateTime || event.start?.date),
+      }))
+      .filter((event) => !Number.isNaN(event.start.getTime()) && !Number.isNaN(event.end.getTime()));
+    const slots = [];
+    const workdayStart = parseClock(this.availability.startTime, '09:00');
+    const workdayEnd = parseClock(this.availability.endTime, '18:00');
+
+    for (let dayOffset = 0; dayOffset <= Number(lookaheadDays || 7) && slots.length < maxSlots; dayOffset += 1) {
+      const localParts = getTimeZoneParts(addDays(now, dayOffset), this.timeZone);
+
+      if (!this.availability.workdays.has(localParts.weekday)) {
+        continue;
+      }
+
+      const dayStart = zonedTimeToUtc(
+        {
+          day: localParts.day,
+          hour: workdayStart.hour,
+          minute: workdayStart.minute,
+          month: localParts.month,
+          year: localParts.year,
+        },
+        this.timeZone,
+      );
+      const dayEnd = zonedTimeToUtc(
+        {
+          day: localParts.day,
+          hour: workdayEnd.hour,
+          minute: workdayEnd.minute,
+          month: localParts.month,
+          year: localParts.year,
+        },
+        this.timeZone,
+      );
+      let cursor = roundUpDate(new Date(Math.max(dayStart.getTime(), minStart.getTime())), this.availability.stepMinutes);
+
+      while (cursor.getTime() + durationMs <= dayEnd.getTime() && slots.length < maxSlots) {
+        const slotEnd = new Date(cursor.getTime() + durationMs);
+        const isBusy = busy.some((event) => eventsOverlap(cursor, slotEnd, event.start, event.end));
+
+        if (!isBusy) {
+          slots.push({
+            calendarId,
+            endDateTime: slotEnd.toISOString(),
+            leadType,
+            startDateTime: cursor.toISOString(),
+          });
+        }
+
+        cursor = addMinutes(cursor, this.availability.stepMinutes);
+      }
+    }
+
+    return slots;
   }
 
   async cancelMeeting({ calendarId, eventId, leadType }) {

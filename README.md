@@ -54,6 +54,7 @@ O bot atende de forma formal e direta para reintegracao de credito e regularizac
 - Quem nao aceita pagar a analise e classificado como curioso/descartado e nao vai para agenda.
 - O bot nao promete limpeza garantida, prazo fechado, aprovacao de credito ou financiamento antes da analise.
 - Para marcar, o cliente precisa aceitar a analise paga e informar data, horario e email do convite.
+- Quando faltar data e horario, o bot consulta a agenda responsavel e oferece horarios livres antes de pedir uma sugestao aberta.
 - Se o cliente pedir para cancelar/desmarcar depois de agendado, o bot cancela o proximo agendamento futuro no Google Agenda e marca como `cancelled` no Supabase.
 
 ## Google Agenda
@@ -76,6 +77,13 @@ GOOGLE_OAUTH_TOKEN_DIR=.secrets
 GOOGLE_CALENDAR_ID=primary
 GOOGLE_CALENDAR_TIME_ZONE=America/Sao_Paulo
 GOOGLE_CALENDAR_EVENT_DURATION_MINUTES=30
+GOOGLE_CALENDAR_WORKDAY_START=09:00
+GOOGLE_CALENDAR_WORKDAY_END=18:00
+GOOGLE_CALENDAR_WORKDAYS=1,2,3,4,5
+GOOGLE_CALENDAR_AVAILABILITY_LOOKAHEAD_DAYS=7
+GOOGLE_CALENDAR_AVAILABILITY_MAX_SLOTS=4
+GOOGLE_CALENDAR_AVAILABILITY_STEP_MINUTES=30
+GOOGLE_CALENDAR_MIN_NOTICE_MINUTES=60
 ```
 
 Depois suba o app, clique em `Conectar Google` na dashboard e aceite o acesso ao Google Agenda. O token fica salvo localmente em `.secrets/`, que nao entra no Git. No Render, use Render Disk e configure `GOOGLE_OAUTH_TOKEN_DIR=/var/data/secrets` para nao perder os tokens em restart/deploy.
