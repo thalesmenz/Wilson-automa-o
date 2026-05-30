@@ -1,6 +1,8 @@
 node_modules
 dist
 .env
+render.env
+.render.env
 .secrets
 server/data
 server/sessions
