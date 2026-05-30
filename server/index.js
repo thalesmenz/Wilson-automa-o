@@ -170,6 +170,26 @@ app.get('/api/google/callback', async (req, res) => {
   }
 });
 
+app.post('/api/google/disconnect', async (req, res) => {
+  try {
+    const result = await calendar.disconnectOAuth({ leadType: req.body?.leadType });
+    const state = whatsapp.getState();
+
+    io.emit('status', state);
+    addActivity({
+      id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      type: 'calendar',
+      message: 'Google Agenda desconectado.',
+      meta: result,
+      createdAt: new Date().toISOString(),
+    });
+
+    res.json(state);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
 app.post('/api/whatsapp/connect', async (_req, res) => {
   try {
     const state = await whatsapp.connect();

@@ -14,6 +14,7 @@ import {
   RefreshCcw,
   ShieldCheck,
   Trash2,
+  Unlink,
   UserCheck,
   Wifi,
   X,
@@ -323,6 +324,13 @@ export default function App() {
     }
   }
 
+  async function disconnectGoogle(leadType) {
+    await runAction(async () => {
+      const payload = await request('/api/google/disconnect', { method: 'POST', body: JSON.stringify({ leadType }) });
+      setStatus(payload);
+    }, leadType === 'high_ticket' ? 'Agenda Wilson desconectada.' : 'Agenda Andre desconectada.');
+  }
+
   function renderOverview() {
     return (
       <>
@@ -459,12 +467,13 @@ export default function App() {
               action={
                 <button
                   type="button"
-                  className="icon-button"
-                  disabled={busy || highTicketCalendarConnected || !googleOauthConfigured}
-                  onClick={() => connectGoogle('high_ticket')}
-                  aria-label="Conectar agenda Wilson"
+                  className={`icon-button ${highTicketCalendarConnected ? 'danger' : ''}`}
+                  disabled={busy || (!highTicketCalendarConnected && !googleOauthConfigured)}
+                  onClick={() => (highTicketCalendarConnected ? disconnectGoogle('high_ticket') : connectGoogle('high_ticket'))}
+                  aria-label={highTicketCalendarConnected ? 'Desconectar agenda Wilson' : 'Conectar agenda Wilson'}
+                  title={highTicketCalendarConnected ? 'Desconectar agenda Wilson' : 'Conectar agenda Wilson'}
                 >
-                  <ArrowUpRight size={17} />
+                  {highTicketCalendarConnected ? <Unlink size={17} /> : <ArrowUpRight size={17} />}
                 </button>
               }
             />
@@ -476,12 +485,13 @@ export default function App() {
               action={
                 <button
                   type="button"
-                  className="icon-button"
-                  disabled={busy || lowTicketCalendarConnected || !googleOauthConfigured}
-                  onClick={() => connectGoogle('low_ticket')}
-                  aria-label="Conectar agenda Andre"
+                  className={`icon-button ${lowTicketCalendarConnected ? 'danger' : ''}`}
+                  disabled={busy || (!lowTicketCalendarConnected && !googleOauthConfigured)}
+                  onClick={() => (lowTicketCalendarConnected ? disconnectGoogle('low_ticket') : connectGoogle('low_ticket'))}
+                  aria-label={lowTicketCalendarConnected ? 'Desconectar agenda Andre' : 'Conectar agenda Andre'}
+                  title={lowTicketCalendarConnected ? 'Desconectar agenda Andre' : 'Conectar agenda Andre'}
                 >
-                  <ArrowUpRight size={17} />
+                  {lowTicketCalendarConnected ? <Unlink size={17} /> : <ArrowUpRight size={17} />}
                 </button>
               }
             />

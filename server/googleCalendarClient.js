@@ -142,6 +142,11 @@ export class GoogleCalendarClient {
     return Boolean(this.getOAuthRefreshToken('default') || this.getOAuthRefreshToken('low_ticket') || this.getOAuthRefreshToken('high_ticket'));
   }
 
+  getDirectOAuthRefreshToken(leadType) {
+    const normalizedLeadType = normalizeLeadType(leadType);
+    return this.oauthTokens[normalizedLeadType] || readOAuthToken(this.oauthTokenDir, normalizedLeadType)?.refresh_token || null;
+  }
+
   getStatus() {
     return {
       enabled: this.isReady,
@@ -154,9 +159,9 @@ export class GoogleCalendarClient {
       oauth: {
         configured: this.hasOAuthConfig,
         connected: {
-          default: Boolean(this.getOAuthRefreshToken('default')),
-          highTicket: Boolean(this.getOAuthRefreshToken('high_ticket')),
-          lowTicket: Boolean(this.getOAuthRefreshToken('low_ticket')),
+          default: Boolean(this.getDirectOAuthRefreshToken('default')),
+          highTicket: Boolean(this.getDirectOAuthRefreshToken('high_ticket')),
+          lowTicket: Boolean(this.getDirectOAuthRefreshToken('low_ticket')),
         },
       },
       provider: 'Google Calendar',
@@ -227,6 +232,36 @@ export class GoogleCalendarClient {
     return {
       leadType: normalizedLeadType,
       savedLocally: Boolean(tokenPath),
+      tokenPath,
+    };
+  }
+
+  async disconnectOAuth({ leadType = 'default' } = {}) {
+    if (!this.hasOAuthConfig) {
+      throw new Error('OAuth do Google Agenda nao configurado.');
+    }
+
+    const normalizedLeadType = normalizeLeadType(leadType);
+    const tokenPath = getTokenPath(this.oauthTokenDir, normalizedLeadType);
+    const hadMemoryToken = Boolean(this.oauthTokens[normalizedLeadType]);
+    const hadFileToken = Boolean(tokenPath && fs.existsSync(tokenPath));
+
+    this.oauthTokens[normalizedLeadType] = null;
+
+    if (normalizedLeadType === 'default') {
+      this.calendar.clear();
+    } else {
+      this.calendar.delete(normalizedLeadType);
+    }
+
+    if (hadFileToken) {
+      await fsPromises.rm(tokenPath, { force: true });
+    }
+
+    return {
+      disconnected: hadMemoryToken || hadFileToken,
+      leadType: normalizedLeadType,
+      removedLocalToken: hadFileToken,
       tokenPath,
     };
   }
