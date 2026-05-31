@@ -117,7 +117,7 @@ export class GeminiClient {
 
     let result = await requestReply({
       instruction:
-        'Responda pelo Gemini em no maximo 320 caracteres, com ate 3 frases completas. Termine sempre com ponto ou pergunta. Se for primeiro contato, apresente-se como assistente do Wilson Sanches e pergunte se o caso e nome negativado ou dificuldade de aprovar credito por rating bancario baixo.',
+        'Responda pelo Gemini em no maximo 320 caracteres, com ate 3 frases completas. Termine sempre com ponto ou pergunta. Se for primeiro contato, apresente-se como assistente do Wilson Sanches e pergunte com opcoes numeradas: 1 nome negativado/restrito, 2 banco nao aprova credito/financiamento/limite, 3 nao sabe o problema, 4 so quer tirar duvida.',
     });
 
     if (!result.reply) {
