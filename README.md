@@ -15,7 +15,10 @@ Por padrao o bot nao responde mensagens em grupos:
 
 ```bash
 WHATSAPP_RESPOND_TO_GROUPS=false
+WHATSAPP_AUTO_CONNECT=true
 ```
+
+Em producao, `WHATSAPP_AUTO_CONNECT` tenta religar o WhatsApp automaticamente quando o Render reinicia usando a sessao salva em `WHATSAPP_SESSION_DIR`.
 
 ## Scripts
 

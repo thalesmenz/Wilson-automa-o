@@ -25,6 +25,7 @@ const settingsPath = process.env.APP_SETTINGS_PATH
 const whatsappSessionDir = process.env.WHATSAPP_SESSION_DIR
   ? path.resolve(process.env.WHATSAPP_SESSION_DIR)
   : path.join(__dirname, 'sessions', 'baileys');
+const whatsappAutoConnect = process.env.WHATSAPP_AUTO_CONNECT !== 'false';
 
 async function readSettings() {
   try {
@@ -349,4 +350,20 @@ process.once('SIGTERM', shutdown);
 server.listen(port, () => {
   console.log(`API em http://localhost:${port}`);
   console.log(`Front em ${clientOrigin}`);
+
+  if (whatsappAutoConnect) {
+    const timer = setTimeout(() => {
+      whatsapp.connect().catch((error) => {
+        addActivity({
+          id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+          type: 'error',
+          message: 'Falha ao reconectar WhatsApp automaticamente.',
+          meta: { error: error.message },
+          createdAt: new Date().toISOString(),
+        });
+      });
+    }, 1000);
+
+    timer.unref?.();
+  }
 });
