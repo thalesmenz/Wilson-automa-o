@@ -71,17 +71,51 @@ function normalizePhone(value) {
 }
 
 function getPhoneFromJid(jid) {
-  const digits = String(jid || '').split('@')[0]?.replace(/\D/g, '') || '';
-  return digits ? `+${digits}` : null;
+  const value = String(jid || '');
+  if (!value.endsWith('@s.whatsapp.net')) {
+    return null;
+  }
+
+  const digits = value.split('@')[0]?.replace(/\D/g, '') || '';
+  return formatBrazilianPhoneWithCountryCode(digits);
+}
+
+function formatBrazilianPhoneWithCountryCode(digits) {
+  const cleanDigits = String(digits || '').replace(/\D/g, '');
+  if (/^55\d{10,11}$/.test(cleanDigits)) {
+    return `+${cleanDigits}`;
+  }
+
+  return null;
+}
+
+function formatBrazilianPhone(digits) {
+  const cleanDigits = String(digits || '').replace(/\D/g, '');
+  const withCountryCode = formatBrazilianPhoneWithCountryCode(cleanDigits);
+  if (withCountryCode) {
+    return withCountryCode;
+  }
+
+  if (/^\d{10,11}$/.test(cleanDigits)) {
+    return `+55${cleanDigits}`;
+  }
+
+  return null;
+}
+
+function formatInternationalPhone(digits) {
+  const cleanDigits = String(digits || '').replace(/\D/g, '');
+  return cleanDigits.length >= 10 && cleanDigits.length <= 15 ? `+${cleanDigits}` : null;
 }
 
 function extractPhoneFromText(text) {
   const matches = String(text || '').match(/\+?\d[\d\s().-]{8,}\d/g) || [];
   const phone = matches
     .map((match) => match.replace(/\D/g, ''))
-    .find((digits) => digits.length >= 10 && digits.length <= 15);
+    .map((digits) => formatBrazilianPhone(digits) || formatInternationalPhone(digits))
+    .find(Boolean);
 
-  return phone ? `+${phone}` : null;
+  return phone || null;
 }
 
 function getMessageText(message) {
@@ -166,12 +200,15 @@ function wantsPhoneCall(text) {
 }
 
 function getPhoneCallPreference(text, jid) {
-  if (!wantsPhoneCall(text)) {
+  const explicitPhone = extractPhoneFromText(text);
+  if (!wantsPhoneCall(text) && !explicitPhone) {
     return {};
   }
 
+  const jidPhone = explicitPhone ? null : getPhoneFromJid(jid);
   return {
-    contactPhone: extractPhoneFromText(text) || getPhoneFromJid(jid),
+    contactPhone: explicitPhone || jidPhone || undefined,
+    contactPhoneSource: explicitPhone ? 'message' : jidPhone ? 'jid' : undefined,
     meetingChannel: 'phone',
     phoneCallAccepted: true,
   };
@@ -266,14 +303,41 @@ function isPhoneCallSchedule(data) {
   return Boolean(data?.phoneCallAccepted || data?.meetingChannel === 'phone' || data?.scheduleMode === 'phone');
 }
 
+function normalizeSchedulePhone(data = {}, { jid, text } = {}) {
+  if (!isPhoneCallSchedule(data)) {
+    return data;
+  }
+
+  const explicitPhone = extractPhoneFromText(text);
+  const jidPhone = getPhoneFromJid(jid);
+  const trustedCurrentPhone =
+    data.contactPhoneSource === 'message' || data.contactPhoneSource === 'jid'
+      ? formatBrazilianPhone(data.contactPhone) || formatInternationalPhone(data.contactPhone)
+      : null;
+  const contactPhone = explicitPhone || trustedCurrentPhone || jidPhone || null;
+  const contactPhoneSource = explicitPhone ? 'message' : trustedCurrentPhone ? data.contactPhoneSource : jidPhone ? 'jid' : undefined;
+
+  return compactObject({
+    ...data,
+    contactPhone,
+    contactPhoneSource,
+  });
+}
+
 function getScheduleMissing(data) {
   const missing = [];
   if (!data?.startDateTime) {
     missing.push('data e horario');
   }
-  if (!data?.attendeeEmail && !isPhoneCallSchedule(data)) {
+
+  if (isPhoneCallSchedule(data)) {
+    if (!data?.contactPhone) {
+      missing.push('telefone para ligacao');
+    }
+  } else if (!data?.attendeeEmail) {
     missing.push('email ou confirmacao de ligacao por telefone');
   }
+
   return missing;
 }
 
@@ -336,6 +400,15 @@ function formatAvailableSlot(slot) {
 }
 
 function buildMissingScheduleMessage(missing) {
+  if (missing.includes('telefone para ligacao')) {
+    const withoutPhone = missing.filter((item) => item !== 'telefone para ligacao');
+    if (withoutPhone.length) {
+      return `Perfeito. Me confirme o telefone com DDD para a ligacao e me envie ${formatPtList(withoutPhone)}.`;
+    }
+
+    return 'Perfeito. Me confirme o telefone com DDD para a ligacao.';
+  }
+
   if (missing.includes('email ou confirmacao de ligacao por telefone')) {
     const withoutContact = missing.filter((item) => item !== 'email ou confirmacao de ligacao por telefone');
     const schedulePart = withoutContact.length ? `, alem de ${formatPtList(withoutContact)}` : '';
@@ -352,8 +425,11 @@ function buildAvailableSlotsMessage(slots, missing) {
 
   const options = slots.map((slot, index) => `${index + 1}) ${formatAvailableSlot(slot)}`).join('\n');
   const needsContact = missing.includes('email ou confirmacao de ligacao por telefone');
+  const needsPhone = missing.includes('telefone para ligacao');
   const emailLine = needsContact
     ? 'Me diga qual opcao prefere e envie seu email. Se nao tiver email, marco uma ligacao pelo telefone deste WhatsApp.'
+    : needsPhone
+      ? 'Me diga qual opcao prefere e confirme o telefone com DDD para a ligacao.'
     : 'Me diga qual opcao prefere.';
   return `Tenho estes horarios disponiveis:\n${options}\n${emailLine}`;
 }
@@ -938,11 +1014,14 @@ export class WhatsAppClient extends EventEmitter {
       if (selectedSlot || phoneCallPreference.phoneCallAccepted) {
         current = {
           ...current,
-          data: {
-            ...current.data,
-            ...phoneCallPreference,
-            startDateTime: selectedSlot?.startDateTime || current.data.startDateTime,
-          },
+          data: normalizeSchedulePhone(
+            {
+              ...current.data,
+              ...phoneCallPreference,
+              startDateTime: selectedSlot?.startDateTime || current.data.startDateTime,
+            },
+            { jid, text },
+          ),
           updatedAt: new Date().toISOString(),
         };
         this.scheduling.set(jid, current);
@@ -1008,7 +1087,7 @@ export class WhatsAppClient extends EventEmitter {
       }
 
       if (isConfirmation(text)) {
-        const data = mergeScheduleData(current.data, { analysisAccepted: true });
+        const data = normalizeSchedulePhone(mergeScheduleData(current.data, { analysisAccepted: true }), { jid, text });
         const leadType = normalizeLeadType(data.leadType);
 
         await this.recordLeadStatus({
@@ -1091,13 +1170,13 @@ export class WhatsAppClient extends EventEmitter {
       return null;
     }
 
-    const data = mergeScheduleData(current?.data, {
-      ...analysis,
-      ...phoneCallPreference,
-    });
-    if (isPhoneCallSchedule(data) && !data.contactPhone) {
-      data.contactPhone = getPhoneFromJid(jid);
-    }
+    const data = normalizeSchedulePhone(
+      mergeScheduleData(current?.data, {
+        ...analysis,
+        ...phoneCallPreference,
+      }),
+      { jid, text },
+    );
     const rawLeadType = String(analysis.leadType || data.leadType || '').trim();
 
     if (analysis.intent === 'discard' || isDiscardedLead(rawLeadType)) {
@@ -1282,23 +1361,29 @@ export class WhatsAppClient extends EventEmitter {
       return null;
     }
 
-    const phoneCall = isPhoneCallSchedule(current.data);
+    const data = normalizeSchedulePhone(current.data, { jid });
+    const missing = getScheduleMissing(data);
+    if (missing.length) {
+      return this.createMissingDetailsReply({ data, jid, missing });
+    }
+
+    const phoneCall = isPhoneCallSchedule(data);
     try {
       const event = await this.calendar.createMeeting({
-        attendeeEmail: current.data.attendeeEmail,
-        attendeeName: current.data.attendeeName || contactName,
+        attendeeEmail: data.attendeeEmail,
+        attendeeName: data.attendeeName || contactName,
         createMeet: !phoneCall,
         description: buildCalendarDescription({
           contactName,
-          data: current.data,
+          data,
           jid,
-          leadType: current.data.leadType,
-          notes: current.data.notes,
+          leadType: data.leadType,
+          notes: data.notes,
         }),
-        durationMinutes: current.data.durationMinutes || DEFAULT_MEETING_DURATION_MINUTES,
-        leadType: current.data.leadType,
-        startDateTime: current.data.startDateTime,
-        title: buildCalendarTitle(current.data, contactName),
+        durationMinutes: data.durationMinutes || DEFAULT_MEETING_DURATION_MINUTES,
+        leadType: data.leadType,
+        startDateTime: data.startDateTime,
+        title: buildCalendarTitle(data, contactName),
       });
 
       this.scheduling.delete(jid);
@@ -1307,7 +1392,7 @@ export class WhatsAppClient extends EventEmitter {
         contactName,
         eventId: event.eventId,
         jid,
-        leadType: current.data.leadType,
+        leadType: data.leadType,
         meetingAt: event.startDateTime,
         status: 'meeting_created',
       });
@@ -1317,13 +1402,13 @@ export class WhatsAppClient extends EventEmitter {
         leadType: event.leadType,
       });
       await this.saveAppointment({
-        attendeeEmail: current.data.attendeeEmail,
+        attendeeEmail: data.attendeeEmail,
         calendarId: event.calendarId,
         calendarLink: event.calendarLink,
         contactName,
         eventId: event.eventId,
         jid,
-        leadType: current.data.leadType,
+        leadType: data.leadType,
         meetLink: event.meetLink,
         startDateTime: event.startDateTime,
         title: event.title,
@@ -1337,14 +1422,14 @@ export class WhatsAppClient extends EventEmitter {
         return {
           ...this.defaultReply,
           name: 'Google Agenda',
-          response: `Ligacao marcada para ${meetingDate}. O especialista responsavel vai chamar pelo telefone/WhatsApp ${current.data.contactPhone}.`,
+          response: `Ligacao marcada para ${meetingDate}. O especialista responsavel vai chamar pelo telefone/WhatsApp ${data.contactPhone}.`,
         };
       }
 
       return {
         ...this.defaultReply,
         name: 'Google Agenda',
-        response: `Consulta marcada para ${meetingDate}. Encaminhei para a agenda do especialista responsavel e enviei o convite para ${current.data.attendeeEmail}.${meetLine}${calendarLine}`,
+        response: `Consulta marcada para ${meetingDate}. Encaminhei para a agenda do especialista responsavel e enviei o convite para ${data.attendeeEmail}.${meetLine}${calendarLine}`,
       };
     } catch (error) {
       this.emitActivity('error', 'Falha ao criar evento no Google Agenda.', { error: error.message });
