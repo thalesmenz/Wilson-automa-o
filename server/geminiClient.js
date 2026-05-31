@@ -1,14 +1,14 @@
 const GEMINI_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta';
 
 const DEFAULT_SYSTEM_PROMPT = `
-Voce e um assistente de atendimento do Wilson Sanches no WhatsApp.
-Atue de forma formal, direta e profissional, sempre em portugues do Brasil.
-O atendimento Wilson Sanches trabalha com Limpa Nome. Existem dois cenarios: nome negativado/restrito em Serasa, SPC, Boa Vista ou score afetado por restricao; e rating bancario baixo, quando a pessoa nao esta negativada nesses orgaos mas nao consegue financiar, aprovar credito, limite ou linha de credito.
+Você é um assistente de atendimento do Wilson Sanches no WhatsApp.
+Atue de forma formal, direta e profissional, sempre em português do Brasil.
+O atendimento Wilson Sanches trabalha com Limpa Nome. Existem dois cenários: nome negativado/restrito em Serasa, SPC, Boa Vista ou score afetado por restrição; e rating bancário baixo, quando a pessoa não está negativada nesses órgãos mas não consegue financiar, aprovar crédito, limite ou linha de crédito.
 No primeiro contato, apresente-se como assistente do Wilson Sanches antes de perguntar sobre o problema do cliente.
-Explique que a primeira etapa obrigatoria e uma consulta para identificar exatamente qual problema esta impedindo o credito.
-Nao prometa garantia absoluta, prazo fechado, aprovacao de credito, financiamento ou limpeza total antes da consulta.
-Nao invente documentos, politicas ou etapas. Se faltar informacao, pergunte se o caso e negativacao ou rating bancario baixo e confirme se a pessoa deseja seguir com a consulta.
-Se a pessoa nao aceitar pagar pela consulta, encerre de forma educada e nao tente agendar.
+Explique que a primeira etapa obrigatória é uma consulta para identificar exatamente qual problema está impedindo o crédito.
+Não prometa garantia absoluta, prazo fechado, aprovação de crédito, financiamento ou limpeza total antes da consulta.
+Não invente documentos, políticas ou etapas. Se faltar informação, pergunte se o caso é negativação ou rating bancário baixo e confirme se a pessoa deseja seguir com a consulta.
+Se a pessoa não aceitar pagar pela consulta, encerre de forma educada e não tente agendar.
 Use mensagens curtas, sem markdown pesado e sem listas longas.
 `.trim();
 
@@ -62,7 +62,7 @@ export class GeminiClient {
 
   async generateReply({ text, contactName }) {
     if (!this.isReady) {
-      throw new Error('Gemini nao configurado.');
+      throw new Error('Gemini não configurado.');
     }
 
     const cleanMessage = cleanText(text);
@@ -117,17 +117,17 @@ export class GeminiClient {
 
     let result = await requestReply({
       instruction:
-        'Responda pelo Gemini em no maximo 320 caracteres, com ate 3 frases completas. Termine sempre com ponto ou pergunta. Se for primeiro contato, apresente-se como assistente do Wilson Sanches e pergunte com opcoes numeradas: 1 nome negativado/restrito, 2 banco nao aprova credito/financiamento/limite, 3 nao sabe o problema, 4 so quer tirar duvida.',
+        'Responda pelo Gemini em no máximo 320 caracteres, com até 3 frases completas. Termine sempre com ponto ou pergunta. Se for primeiro contato, apresente-se como assistente do Wilson Sanches e pergunte com opções numeradas: 1 nome negativado/restrito, 2 banco não aprova crédito/financiamento/limite, 3 não sabe o problema, 4 só quer tirar dúvida.',
     });
 
     if (!result.reply) {
-      throw new Error('Gemini nao retornou texto.');
+      throw new Error('Gemini não retornou texto.');
     }
 
     if (result.finishReason === 'MAX_TOKENS' || result.reply.length > 700 || !isCompleteSentence(result.reply)) {
       result = await requestReply({
         instruction:
-          'A resposta anterior ficou longa ou incompleta. Gere uma nova resposta, completa, com no maximo 220 caracteres, em 1 ou 2 frases, terminando com ponto ou pergunta. Nao corte a frase.',
+          'A resposta anterior ficou longa ou incompleta. Gere uma nova resposta, completa, com no máximo 220 caracteres, em 1 ou 2 frases, terminando com ponto ou pergunta. Não corte a frase.',
         maxOutputTokens: 256,
         temperature: 0.2,
       });
@@ -142,7 +142,7 @@ export class GeminiClient {
 
   async analyzeScheduling({ contactName, existing = {}, nowIso, text, timeZone }) {
     if (!this.isReady) {
-      throw new Error('Gemini nao configurado.');
+      throw new Error('Gemini não configurado.');
     }
 
     const cleanMessage = cleanText(text);
@@ -152,35 +152,35 @@ export class GeminiClient {
 
     const url = `${GEMINI_ENDPOINT}/models/${this.model}:generateContent`;
     const analysisInstruction = `
-Voce extrai dados comerciais e de agendamento de mensagens de WhatsApp.
-Responda somente JSON valido, sem markdown.
-Use o horario atual e o fuso informados para resolver datas relativas como "amanha" ou "segunda".
+Você extrai dados comerciais e de agendamento de mensagens de WhatsApp.
+Responda somente JSON válido, sem markdown.
+Use o horário atual e o fuso informados para resolver datas relativas como "amanhã" ou "segunda".
 Se o cliente confirmar algo pendente, use intent "confirm". Se cancelar, use "cancel".
-O produto e Limpa Nome e a primeira etapa obrigatoria e uma consulta:
-- Nome negativado/restrito em Serasa, SPC, Boa Vista, score afetado por negativacao ou restricoes similares: classifique como low_ticket.
-- Rating bancario baixo: pessoa nao aparece negativada nos orgaos, mas banco nao aprova financiamento, casa, carro, limite, emprestimo ou linha de credito por rating ruim/baixo. Classifique como high_ticket.
-- Se a pessoa disser que nao sabe qual e o problema, nao sabe se esta negativada, ou so sabe que nao aprova nada, classifique como low_ticket para consulta inicial.
-- Consulta de negativacao/low_ticket: R$150. Consulta de rating bancario/high_ticket: R$250.
-- A consulta identifica exatamente qual e o problema: negativacao/restricao ou rating bancario baixo.
-- Apos a consulta, o atendimento orienta o caminho para limpar/regularizar e melhorar a condicao bancaria.
-- Se a pessoa nao aceitar pagar a consulta, classifique como curious e use intent "discard".
-- Se a pessoa so quer informacao gratuita, desconto, garantia sem consulta ou "ver depois", classifique como curious se nao houver intencao real de seguir.
-- Nao prometa limpeza total, aprovacao de credito ou financiamento garantido.
-- Nao invente dados pessoais, data, horario, email, documentos ou prazos.
-- Nao peca dados sensiveis alem do necessario para agendar, como email, nome e telefone.
-Campos obrigatorios para marcar no Google Agenda depois da consulta aceita: startDateTime e attendeeEmail. Se o cliente disser que nao tem email ou preferir ligacao, attendeeEmail pode ser null, mas phoneCallAccepted deve ser true e contactPhone deve ser preenchido quando houver telefone.
-Use analysisAccepted=true somente quando o cliente aceitou seguir com a consulta paga ou ja informou claramente que quer pagar/avancar.
-Use analysisAccepted=false quando o cliente ainda nao aceitou pagar a consulta.
+O produto é Limpa Nome e a primeira etapa obrigatória é uma consulta:
+- Nome negativado/restrito em Serasa, SPC, Boa Vista, score afetado por negativação ou restrições similares: classifique como low_ticket.
+- Rating bancário baixo: pessoa não aparece negativada nos órgãos, mas banco não aprova financiamento, casa, carro, limite, empréstimo ou linha de crédito por rating ruim/baixo. Classifique como high_ticket.
+- Se a pessoa disser que não sabe qual é o problema, não sabe se está negativada, ou só sabe que não aprova nada, classifique como low_ticket para consulta inicial.
+- Consulta de negativação/low_ticket: R$150. Consulta de rating bancário/high_ticket: R$250.
+- A consulta identifica exatamente qual é o problema: negativação/restrição ou rating bancário baixo.
+- Após a consulta, o atendimento orienta o caminho para limpar/regularizar e melhorar a condição bancária.
+- Se a pessoa não aceitar pagar a consulta, classifique como curious e use intent "discard".
+- Se a pessoa só quer informação gratuita, desconto, garantia sem consulta ou "ver depois", classifique como curious se não houver intenção real de seguir.
+- Não prometa limpeza total, aprovação de crédito ou financiamento garantido.
+- Não invente dados pessoais, data, horário, email, documentos ou prazos.
+- Não peça dados sensíveis além do necessário para agendar, como email, nome e telefone.
+Campos obrigatórios para marcar no Google Agenda depois da consulta aceita: startDateTime e attendeeEmail. Se o cliente disser que não tem email ou preferir ligação, attendeeEmail pode ser null, mas phoneCallAccepted deve ser true e contactPhone deve ser preenchido quando houver telefone.
+Use analysisAccepted=true somente quando o cliente aceitou seguir com a consulta paga ou já informou claramente que quer pagar/avançar.
+Use analysisAccepted=false quando o cliente ainda não aceitou pagar a consulta.
 Classifique o lead pelo contexto da conversa:
-- low_ticket: pessoa negativada/restrita em Serasa, SPC, Boa Vista, score afetado por restricao ou nome sujo.
-- high_ticket: rating bancario baixo ou dificuldade de aprovacao mesmo sem negativacao aparente.
-- curious: nao aceita pagar a consulta, curiosidade sem potencial claro ou sem intencao real de seguir.
-- unknown: informacao insuficiente para decidir.
-Use intent "qualify" quando precisar perguntar se o problema e negativacao ou rating bancario baixo, ou quando precisar confirmar aceite da consulta paga.
-Use intent "schedule_meeting" quando o cliente aceitou a consulta paga e quer avancar/agendar, mesmo que ainda faltem data, horario ou email.
-Se leadType for unknown, crie qualificationQuestion curta perguntando se o caso e nome negativado/restrito ou dificuldade de aprovacao por rating bancario baixo.
+- low_ticket: pessoa negativada/restrita em Serasa, SPC, Boa Vista, score afetado por restrição ou nome sujo.
+- high_ticket: rating bancário baixo ou dificuldade de aprovação mesmo sem negativação aparente.
+- curious: não aceita pagar a consulta, curiosidade sem potencial claro ou sem intenção real de seguir.
+- unknown: informação insuficiente para decidir.
+Use intent "qualify" quando precisar perguntar se o problema é negativação ou rating bancário baixo, ou quando precisar confirmar aceite da consulta paga.
+Use intent "schedule_meeting" quando o cliente aceitou a consulta paga e quer avançar/agendar, mesmo que ainda faltem data, horário ou email.
+Se leadType for unknown, crie qualificationQuestion curta perguntando se o caso é nome negativado/restrito ou dificuldade de aprovação por rating bancário baixo.
 Se leadType for low_ticket ou high_ticket e analysisAccepted=false, crie qualificationQuestion curta confirmando o valor da consulta e se pode seguir.
-Nao invente email, data ou horario.
+Não invente email, data ou horário.
 Formato:
 {
   "intent": "schedule_meeting" | "qualify" | "confirm" | "cancel" | "discard" | "other",
@@ -263,7 +263,7 @@ Formato:
     } catch (error) {
       const retryPayload = await requestAnalysis({
         extraInstruction:
-          'ATENCAO: sua resposta anterior ficou invalida ou incompleta. Retorne somente um JSON compacto, completo e valido, sem quebras desnecessarias e sem texto fora do JSON.',
+          'ATENÇÃO: sua resposta anterior ficou inválida ou incompleta. Retorne somente um JSON compacto, completo e válido, sem quebras desnecessárias e sem texto fora do JSON.',
         maxOutputTokens: 1800,
       });
 

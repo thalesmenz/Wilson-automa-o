@@ -11,10 +11,10 @@ function buildReminderMessage(appointment, type, timeZone) {
   const meetLine = appointment.meetLink ? `\nLink do Meet: ${appointment.meetLink}` : '';
 
   if (type === 'day') {
-    return `Bom dia! Confirmando nossa reuniao de hoje as ${time}.${meetLine}`;
+    return `Bom dia! Confirmando nossa reunião de hoje às ${time}.${meetLine}`;
   }
 
-  return `Passando para lembrar: nossa reuniao comeca em 30 minutos, as ${time}.${meetLine}`;
+  return `Passando para lembrar: nossa reunião começa em 30 minutos, às ${time}.${meetLine}`;
 }
 
 export class ReminderWorker {

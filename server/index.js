@@ -153,7 +153,7 @@ app.get('/api/google/callback', async (req, res) => {
   <body>
     <main>
       <h1>Google Agenda conectado</h1>
-      <p>A conexao OAuth foi salva localmente para <code>${escapeHtml(result.leadType)}</code>. Volte para a dashboard e atualize o status.</p>
+      <p>A conexão OAuth foi salva localmente para <code>${escapeHtml(result.leadType)}</code>. Volte para a dashboard e atualize o status.</p>
       <a href="${clientOrigin}">Voltar para dashboard</a>
     </main>
   </body>
@@ -232,7 +232,7 @@ app.post('/api/automations', async (req, res) => {
 app.put('/api/automations/:id', async (req, res) => {
   const automation = await store.updateAutomation(req.params.id, req.body || {});
   if (!automation) {
-    res.status(404).json({ error: 'Automacao nao encontrada.' });
+    res.status(404).json({ error: 'Automação não encontrada.' });
     return;
   }
 
@@ -243,7 +243,7 @@ app.put('/api/automations/:id', async (req, res) => {
 app.delete('/api/automations/:id', async (req, res) => {
   const deleted = await store.deleteAutomation(req.params.id);
   if (!deleted) {
-    res.status(404).json({ error: 'Automacao nao encontrada.' });
+    res.status(404).json({ error: 'Automação não encontrada.' });
     return;
   }
 

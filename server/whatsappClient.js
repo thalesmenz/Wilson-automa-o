@@ -12,17 +12,19 @@ import QRCode from 'qrcode';
 
 const logger = P({ level: process.env.LOG_LEVEL || 'silent' });
 const RESPOND_TO_GROUPS = process.env.WHATSAPP_RESPOND_TO_GROUPS === 'true';
-const configuredDebounceMs = Number(process.env.AUTO_REPLY_DEBOUNCE_MS || 20000);
-const AUTO_REPLY_DEBOUNCE_MS = Number.isFinite(configuredDebounceMs) ? configuredDebounceMs : 20000;
+const DEFAULT_AUTO_REPLY_DEBOUNCE_MS = 2500;
+const DEFAULT_AUTO_REPLY_DELAY_MS = 200;
+const configuredDebounceMs = Number(process.env.AUTO_REPLY_DEBOUNCE_MS || DEFAULT_AUTO_REPLY_DEBOUNCE_MS);
+const AUTO_REPLY_DEBOUNCE_MS = Number.isFinite(configuredDebounceMs) ? configuredDebounceMs : DEFAULT_AUTO_REPLY_DEBOUNCE_MS;
 
 const DEFAULT_AUTO_REPLY = {
   id: 'default-auto-reply',
-  name: 'Resposta automatica',
+  name: 'Resposta automática',
   response:
     process.env.AUTO_REPLY_TEXT ||
-    'Ola, tudo bem? Sou o assistente do Wilson Sanches. Trabalhamos com Limpa Nome e analise de credito para identificar problemas de negativacao ou rating bancario baixo. Seu caso e nome negativado/restrito ou dificuldade de aprovacao em banco/financiamento?',
+    'Olá, tudo bem? Sou o assistente do Wilson Sanches. Trabalhamos com Limpa Nome e análise de crédito para identificar problemas de negativação ou rating bancário baixo. Seu caso é nome negativado/restrito ou dificuldade de aprovação em banco/financiamento?',
   active: process.env.AUTO_REPLY_ENABLED !== 'false',
-  delayMs: Number(process.env.AUTO_REPLY_DELAY_MS || 800),
+  delayMs: Number(process.env.AUTO_REPLY_DELAY_MS || DEFAULT_AUTO_REPLY_DELAY_MS),
   cooldownSeconds: Number(process.env.AUTO_REPLY_COOLDOWN_SECONDS || 300),
   includeGroups: RESPOND_TO_GROUPS,
 };
@@ -34,9 +36,9 @@ const ANALYSIS_FEES = {
   low_ticket: 150,
 };
 const LEAD_TYPE_LABELS = {
-  high_ticket: 'rating bancario baixo',
+  high_ticket: 'rating bancário baixo',
   low_ticket: 'nome negativado',
-  unknown: 'nao qualificado',
+  unknown: 'não qualificado',
 };
 
 const LEAD_ROUTES = {
@@ -377,15 +379,15 @@ function normalizeSchedulePhone(data = {}, { jid, text } = {}) {
 function getScheduleMissing(data) {
   const missing = [];
   if (!data?.startDateTime) {
-    missing.push('data e horario');
+    missing.push('data e horário');
   }
 
   if (isPhoneCallSchedule(data)) {
     if (!data?.contactPhone) {
-      missing.push('telefone para ligacao');
+      missing.push('telefone para ligação');
     }
   } else if (!data?.attendeeEmail) {
-    missing.push('email ou confirmacao de ligacao por telefone');
+    missing.push('email ou confirmação de ligação por telefone');
   }
 
   return missing;
@@ -446,23 +448,23 @@ function getSlotParts(value) {
 function formatAvailableSlot(slot) {
   const parts = getSlotParts(slot.startDateTime);
   const weekday = WEEKDAY_LABELS.find((label) => normalizeText(label) === parts.weekday) || parts.weekday;
-  return `${weekday}, ${parts.day}/${parts.month} as ${parts.hour}:${parts.minute}`;
+  return `${weekday}, ${parts.day}/${parts.month} às ${parts.hour}:${parts.minute}`;
 }
 
 function buildMissingScheduleMessage(missing) {
-  if (missing.includes('telefone para ligacao')) {
-    const withoutPhone = missing.filter((item) => item !== 'telefone para ligacao');
+  if (missing.includes('telefone para ligação')) {
+    const withoutPhone = missing.filter((item) => item !== 'telefone para ligação');
     if (withoutPhone.length) {
-      return `Perfeito. Me confirme o telefone com DDD para a ligacao e me envie ${formatPtList(withoutPhone)}.`;
+      return `Perfeito. Me confirme o telefone com DDD para a ligação e me envie ${formatPtList(withoutPhone)}.`;
     }
 
-    return 'Perfeito. Me confirme o telefone com DDD para a ligacao.';
+    return 'Perfeito. Me confirme o telefone com DDD para a ligação.';
   }
 
-  if (missing.includes('email ou confirmacao de ligacao por telefone')) {
-    const withoutContact = missing.filter((item) => item !== 'email ou confirmacao de ligacao por telefone');
-    const schedulePart = withoutContact.length ? `\n\nTambem preciso de ${formatPtList(withoutContact)}.` : '';
-    return `Para finalizar, como prefere o atendimento?\n\n1. Enviar convite por email com Google Meet\n2. Nao tenho email, prefiro ligacao por telefone/WhatsApp${schedulePart}`;
+  if (missing.includes('email ou confirmação de ligação por telefone')) {
+    const withoutContact = missing.filter((item) => item !== 'email ou confirmação de ligação por telefone');
+    const schedulePart = withoutContact.length ? `\n\nTambém preciso de ${formatPtList(withoutContact)}.` : '';
+    return `Para finalizar, como prefere o atendimento?\n\n1. Enviar convite por email com Google Meet\n2. Não tenho email, prefiro ligação por telefone/WhatsApp${schedulePart}`;
   }
 
   return `Perfeito. Para seguir, me envie ${formatPtList(missing)} para eu criar o convite no Google Agenda.`;
@@ -474,14 +476,14 @@ function buildAvailableSlotsMessage(slots, missing) {
   }
 
   const options = slots.map((slot, index) => `${index + 1}) ${formatAvailableSlot(slot)}`).join('\n');
-  const needsContact = missing.includes('email ou confirmacao de ligacao por telefone');
-  const needsPhone = missing.includes('telefone para ligacao');
+  const needsContact = missing.includes('email ou confirmação de ligação por telefone');
+  const needsPhone = missing.includes('telefone para ligação');
   const emailLine = needsContact
-    ? 'Responda com o numero do horario ou envie outro dia e horario. Depois me envie o email, ou diga "sem email" para ligacao.'
+    ? 'Responda com o número do horário ou envie outro dia e horário. Depois me envie o email, ou diga "sem email" para ligação.'
     : needsPhone
-      ? 'Responda com o numero do horario ou envie outro dia e horario. Tambem confirme o telefone com DDD para a ligacao.'
-      : 'Responda com o numero do horario ou envie outro dia e horario.';
-  return `Tenho estes horarios disponiveis:\n${options}\n${emailLine}`;
+      ? 'Responda com o número do horário ou envie outro dia e horário. Também confirme o telefone com DDD para a ligação.'
+      : 'Responda com o número do horário ou envie outro dia e horário.';
+  return `Tenho estes horários disponíveis:\n${options}\n${emailLine}`;
 }
 
 function findSelectedAvailableSlot(text, slots = []) {
@@ -518,20 +520,20 @@ function findSelectedAvailableSlot(text, slots = []) {
 function buildQualificationMessage(data) {
   const question =
     data.qualificationQuestion ||
-    'Para eu te orientar corretamente, qual e o seu caso?';
+    'Para eu te orientar corretamente, qual é o seu caso?';
 
-  return `${question}\n\n1. Meu nome esta negativado/restrito no Serasa, SPC ou Boa Vista\n2. Nao estou negativado, mas banco nao aprova credito, financiamento ou limite\n3. Nao sei exatamente qual e o problema\n4. So quero tirar uma duvida`;
+  return `${question}\n\n1. Meu nome está negativado/restrito no Serasa, SPC ou Boa Vista\n2. Não estou negativado, mas banco não aprova crédito, financiamento ou limite\n3. Não sei exatamente qual é o problema\n4. Só quero tirar uma dúvida`;
 }
 
 function buildAnalysisOfferMessage(data) {
   const leadType = normalizeLeadType(data.leadType);
 
   if (leadType === 'high_ticket') {
-    return 'Perfeito. Para rating bancario baixo, fazemos uma consulta completa para identificar por que o banco nao aprova financiamento, limite ou credito. O valor da consulta e R$250.\n\n1. Quero seguir com a consulta\n2. Quero entender melhor antes\n3. Nao quero pagar agora';
+    return 'Perfeito. Para rating bancário baixo, fazemos uma consulta completa para identificar por que o banco não aprova financiamento, limite ou crédito. O valor da consulta é R$250.\n\n1. Quero seguir com a consulta\n2. Quero entender melhor antes\n3. Não quero pagar agora';
   }
 
   if (leadType === 'low_ticket') {
-    return 'Perfeito. Para nome negativado, fazemos uma consulta completa para identificar restricoes em Serasa, SPC, Boa Vista, score e apontamentos que afetam seu credito. O valor da consulta e R$150.\n\n1. Quero seguir com a consulta\n2. Quero entender melhor antes\n3. Nao quero pagar agora';
+    return 'Perfeito. Para nome negativado, fazemos uma consulta completa para identificar restrições em Serasa, SPC, Boa Vista, score e apontamentos que afetam seu crédito. O valor da consulta é R$150.\n\n1. Quero seguir com a consulta\n2. Quero entender melhor antes\n3. Não quero pagar agora';
   }
 
   return buildQualificationMessage(data);
@@ -541,18 +543,18 @@ function buildAnalysisDetailsMessage(data) {
   const leadType = normalizeLeadType(data.leadType);
 
   if (leadType === 'high_ticket') {
-    return 'A consulta de rating bancario verifica por que bancos recusam credito, limite, financiamento ou emprestimo mesmo sem negativacao aparente. Ela nao promete aprovacao garantida; identifica o problema para orientar o proximo passo.\n\n1. Quero seguir com a consulta\n2. Tenho outra duvida\n3. Nao quero pagar agora';
+    return 'A consulta de rating bancário verifica por que bancos recusam crédito, limite, financiamento ou empréstimo mesmo sem negativação aparente. Ela não promete aprovação garantida; identifica o problema para orientar o próximo passo.\n\n1. Quero seguir com a consulta\n2. Tenho outra dúvida\n3. Não quero pagar agora';
   }
 
-  return 'A consulta de negativado verifica restricoes em Serasa, SPC, Boa Vista, score e apontamentos que podem impedir credito. Ela nao promete limpeza garantida; identifica o problema para orientar o proximo passo.\n\n1. Quero seguir com a consulta\n2. Tenho outra duvida\n3. Nao quero pagar agora';
+  return 'A consulta de negativado verifica restrições em Serasa, SPC, Boa Vista, score e apontamentos que podem impedir crédito. Ela não promete limpeza garantida; identifica o problema para orientar o próximo passo.\n\n1. Quero seguir com a consulta\n2. Tenho outra dúvida\n3. Não quero pagar agora';
 }
 
 function buildUnknownProblemOfferMessage() {
-  return 'Sem problema. A consulta serve exatamente para identificar se existe negativacao em Serasa/SPC/Boa Vista ou se o problema e rating bancario baixo. Vamos iniciar pela consulta de negativado, no valor de R$150.\n\n1. Sim, pode seguir\n2. Quero entender melhor\n3. Nao quero pagar agora';
+  return 'Sem problema. A consulta serve exatamente para identificar se existe negativação em Serasa/SPC/Boa Vista ou se o problema é rating bancário baixo. Vamos iniciar pela consulta de negativado, no valor de R$150.\n\n1. Sim, pode seguir\n2. Quero entender melhor\n3. Não quero pagar agora';
 }
 
 function buildGeneralQuestionOfferMessage() {
-  return 'Consigo te orientar de forma geral, mas para analisar o seu caso com seguranca a primeira etapa e a consulta paga.\n\n1. Consulta de negativado - R$150\n2. Consulta de rating bancario - R$250\n3. Nao quero pagar agora';
+  return 'Consigo te orientar de forma geral, mas para analisar o seu caso com segurança a primeira etapa é a consulta paga.\n\n1. Consulta de negativado - R$150\n2. Consulta de rating bancário - R$250\n3. Não quero pagar agora';
 }
 
 function buildEmailRequestMessage() {
@@ -560,7 +562,7 @@ function buildEmailRequestMessage() {
 }
 
 function buildPaymentRefusalMessage() {
-  return 'Sem problema. Nesse caso, nao conseguimos avancar com a consulta agora. Caso queira seguir depois, e so chamar.';
+  return 'Sem problema. Nesse caso, não conseguimos avançar com a consulta agora. Caso queira seguir depois, é só chamar.';
 }
 
 function buildConfirmationMessage(data) {
@@ -568,23 +570,23 @@ function buildConfirmationMessage(data) {
   const duration = Number(data.durationMinutes || DEFAULT_MEETING_DURATION_MINUTES);
   const leadType = LEAD_TYPE_LABELS[normalizeLeadType(data.leadType)];
   if (isPhoneCallSchedule(data)) {
-    return `Perfeito. Posso marcar a ligacao de ${leadType} para ${when}, com duracao de ${duration} minutos, pelo telefone ${data.contactPhone}?\n\n1. Sim, confirmar\n2. Quero trocar o horario\n3. Cancelar`;
+    return `Perfeito. Posso marcar a ligação de ${leadType} para ${when}, com duração de ${duration} minutos, pelo telefone ${data.contactPhone}?\n\n1. Sim, confirmar\n2. Quero trocar o horário\n3. Cancelar`;
   }
 
-  return `Perfeito. Posso marcar a consulta de ${leadType} para ${when}, com duracao de ${duration} minutos, e enviar o convite para ${data.attendeeEmail}?\n\n1. Sim, confirmar\n2. Quero trocar o horario\n3. Cancelar`;
+  return `Perfeito. Posso marcar a consulta de ${leadType} para ${when}, com duração de ${duration} minutos, e enviar o convite para ${data.attendeeEmail}?\n\n1. Sim, confirmar\n2. Quero trocar o horário\n3. Cancelar`;
 }
 
 function buildCalendarTitle(data, contactName) {
   const leadType = LEAD_TYPE_LABELS[normalizeLeadType(data.leadType)];
   const name = contactName || data.attendeeName || 'Cliente';
-  return isPhoneCallSchedule(data) ? `Ligacao consulta ${leadType} - ${name}` : data.title || `Consulta ${leadType}`;
+  return isPhoneCallSchedule(data) ? `Ligação consulta ${leadType} - ${name}` : data.title || `Consulta ${leadType}`;
 }
 
 function buildCalendarDescription({ contactName, data = {}, jid, leadType, notes }) {
   return [
     'Consulta marcada automaticamente pelo WhatsApp Bot Wilson Sanches.',
     `Contato: ${contactName || jid}`,
-    isPhoneCallSchedule(data) ? 'Formato: Ligacao por telefone/WhatsApp.' : 'Formato: Google Meet/convite por email.',
+    isPhoneCallSchedule(data) ? 'Formato: ligação por telefone/WhatsApp.' : 'Formato: Google Meet/convite por email.',
     data.contactPhone ? `Telefone: ${data.contactPhone}` : null,
     data.attendeeEmail ? `Email: ${data.attendeeEmail}` : null,
     `WhatsApp JID: ${jid}`,
@@ -730,7 +732,7 @@ export class WhatsAppClient extends EventEmitter {
     } catch (error) {
       this.lastError = error.message;
       this.status = 'error';
-      this.emitActivity('error', 'Falha ao iniciar a conexao.', { error: error.message });
+      this.emitActivity('error', 'Falha ao iniciar a conexão.', { error: error.message });
       this.emitState();
     } finally {
       this.connecting = false;
@@ -769,7 +771,7 @@ export class WhatsAppClient extends EventEmitter {
       const qrTimedOut = code === DisconnectReason.timedOut;
       const shouldReconnect = !this.manualDisconnect && !loggedOut && (wasConnected || restartRequired);
       const errorMessage = restartRequired
-        ? 'WhatsApp pediu reinicio da conexao. Reconectando...'
+        ? 'WhatsApp pediu reinício da conexão. Reconectando...'
         : getUserFriendlyDisconnectMessage(code, lastDisconnect?.error?.message);
 
       this.sock = null;
@@ -792,7 +794,7 @@ export class WhatsAppClient extends EventEmitter {
         clearTimeout(this.reconnectTimer);
         this.reconnectTimer = setTimeout(() => {
           this.connect().catch((error) => {
-            this.emitActivity('error', 'Falha na reconexao.', { error: error.message });
+            this.emitActivity('error', 'Falha na reconexão.', { error: error.message });
           });
         }, 2500);
       }
@@ -1017,7 +1019,7 @@ export class WhatsAppClient extends EventEmitter {
     let nextData = data;
     let response = buildMissingScheduleMessage(missing);
 
-    if (missing.includes('data e horario') && this.calendar?.isReady) {
+    if (missing.includes('data e horário') && this.calendar?.isReady) {
       try {
         const availableSlots = await this.calendar.listAvailableSlots({
           durationMinutes: data.durationMinutes || DEFAULT_MEETING_DURATION_MINUTES,
@@ -1032,10 +1034,10 @@ export class WhatsAppClient extends EventEmitter {
           response = buildAvailableSlotsMessage(availableSlots, missing);
         } else {
           response =
-            'Nao encontrei horarios livres nos proximos dias. Me envie uma sugestao de data e horario para eu verificar.';
+            'Não encontrei horários livres nos próximos dias. Me envie uma sugestão de data e horário para eu verificar.';
         }
       } catch (error) {
-        this.emitActivity('error', 'Falha ao buscar horarios disponiveis.', { error: error.message, jid });
+        this.emitActivity('error', 'Falha ao buscar horários disponíveis.', { error: error.message, jid });
       }
     }
 
@@ -1072,7 +1074,7 @@ export class WhatsAppClient extends EventEmitter {
 
       return {
         ...this.defaultReply,
-        name: 'Qualificacao',
+        name: 'Qualificação',
         response: buildQualificationMessage(data),
       };
     }
@@ -1107,7 +1109,7 @@ export class WhatsAppClient extends EventEmitter {
     if (current?.status === 'awaiting_details') {
       const missingBefore = getScheduleMissing(current.data);
       const waitingForContactChoice =
-        !missingBefore.includes('data e horario') && missingBefore.includes('email ou confirmacao de ligacao por telefone');
+        !missingBefore.includes('data e horário') && missingBefore.includes('email ou confirmação de ligação por telefone');
       const selectedSlot = findSelectedAvailableSlot(text, current.data?.availableSlots);
       let detailsChanged = false;
 
@@ -1200,13 +1202,13 @@ export class WhatsAppClient extends EventEmitter {
         await this.recordLeadStatus({
           contactName,
           jid,
-          reason: 'Cliente escolheu nao pagar pela consulta.',
+          reason: 'Cliente escolheu não pagar pela consulta.',
           status: 'discarded',
         });
 
         return {
           ...this.defaultReply,
-          name: 'Qualificacao',
+          name: 'Qualificação',
           response: buildPaymentRefusalMessage(),
         };
       }
@@ -1226,7 +1228,7 @@ export class WhatsAppClient extends EventEmitter {
 
         return {
           ...this.defaultReply,
-          name: 'Qualificacao',
+          name: 'Qualificação',
           response: buildGeneralQuestionOfferMessage(),
         };
       }
@@ -1239,8 +1241,8 @@ export class WhatsAppClient extends EventEmitter {
           leadType: selectedLeadType,
           notes:
             menuOption === 3
-              ? 'Cliente nao sabe exatamente qual e o problema; iniciar pela consulta de negativado.'
-              : `Cliente selecionou opcao ${menuOption} no menu de qualificacao.`,
+              ? 'Cliente não sabe exatamente qual é o problema; iniciar pela consulta de negativado.'
+              : `Cliente selecionou opção ${menuOption} no menu de qualificação.`,
           paymentAmount: ANALYSIS_FEES[selectedLeadType],
         });
 
@@ -1252,7 +1254,7 @@ export class WhatsAppClient extends EventEmitter {
 
         return {
           ...this.defaultReply,
-          name: 'Qualificacao',
+          name: 'Qualificação',
           response: menuOption === 3 ? buildUnknownProblemOfferMessage() : buildAnalysisOfferMessage(data),
         };
       }
@@ -1263,7 +1265,7 @@ export class WhatsAppClient extends EventEmitter {
         analysisAccepted: false,
         leadConfidence: 0.7,
         leadType: 'low_ticket',
-        notes: 'Cliente nao sabe se o problema e negativacao ou rating bancario baixo; iniciar pela consulta de negativado.',
+        notes: 'Cliente não sabe se o problema é negativação ou rating bancário baixo; iniciar pela consulta de negativado.',
         paymentAmount: ANALYSIS_FEES.low_ticket,
       });
 
@@ -1275,7 +1277,7 @@ export class WhatsAppClient extends EventEmitter {
 
       return {
         ...this.defaultReply,
-        name: 'Qualificacao',
+        name: 'Qualificação',
         response: buildUnknownProblemOfferMessage(),
       };
     }
@@ -1299,7 +1301,7 @@ export class WhatsAppClient extends EventEmitter {
         return {
           ...this.defaultReply,
           name: 'Agenda',
-          response: 'Combinado, nao marquei a reuniao. Se quiser outro horario, e so me mandar.',
+          response: 'Combinado, não marquei a reunião. Se quiser outro horário, é só me mandar.',
         };
       }
     }
@@ -1310,13 +1312,13 @@ export class WhatsAppClient extends EventEmitter {
         await this.recordLeadStatus({
           contactName,
           jid,
-          reason: 'Cliente nao aceitou pagar a consulta.',
+          reason: 'Cliente não aceitou pagar a consulta.',
           status: 'discarded',
         });
 
         return {
           ...this.defaultReply,
-          name: 'Qualificacao',
+          name: 'Qualificação',
           response: buildPaymentRefusalMessage(),
         };
       }
@@ -1324,7 +1326,7 @@ export class WhatsAppClient extends EventEmitter {
       if (menuOption === 2 || isMoreInfoRequest(text)) {
         return {
           ...this.defaultReply,
-          name: 'Qualificacao',
+          name: 'Qualificação',
           response: buildAnalysisDetailsMessage(current.data),
         };
       }
@@ -1346,7 +1348,7 @@ export class WhatsAppClient extends EventEmitter {
             ...this.defaultReply,
             name: 'Agenda',
             response:
-              'A consulta foi confirmada, mas o Google Agenda ainda nao esta configurado no sistema. Vou encaminhar para um atendente finalizar.',
+              'A consulta foi confirmada, mas o Google Agenda ainda não está configurado no sistema. Vou encaminhar para um atendente finalizar.',
           };
         }
 
@@ -1383,7 +1385,7 @@ export class WhatsAppClient extends EventEmitter {
         timeZone: GOOGLE_CALENDAR_TIME_ZONE,
       });
     } catch (error) {
-      this.emitActivity('error', 'IA nao conseguiu analisar agenda.', { error: error.message });
+      this.emitActivity('error', 'IA não conseguiu analisar agenda.', { error: error.message });
       return null;
     }
 
@@ -1433,7 +1435,7 @@ export class WhatsAppClient extends EventEmitter {
 
       return {
         ...this.defaultReply,
-        name: 'Qualificacao',
+        name: 'Qualificação',
         response: buildPaymentRefusalMessage(),
       };
     }
@@ -1459,7 +1461,7 @@ export class WhatsAppClient extends EventEmitter {
 
       return {
         ...this.defaultReply,
-        name: 'Qualificacao',
+        name: 'Qualificação',
         response: buildQualificationMessage(data),
       };
     }
@@ -1473,7 +1475,7 @@ export class WhatsAppClient extends EventEmitter {
 
       return {
         ...this.defaultReply,
-        name: 'Qualificacao',
+        name: 'Qualificação',
         response: buildAnalysisOfferMessage(data),
       };
     }
@@ -1483,7 +1485,7 @@ export class WhatsAppClient extends EventEmitter {
         ...this.defaultReply,
         name: 'Agenda',
         response:
-          'Consigo marcar reunioes, mas o Google Agenda ainda nao esta configurado no sistema. Vou encaminhar para um atendente finalizar.',
+          'Consigo marcar reuniões, mas o Google Agenda ainda não está configurado no sistema. Vou encaminhar para um atendente finalizar.',
       };
     }
 
@@ -1512,7 +1514,7 @@ export class WhatsAppClient extends EventEmitter {
         ...this.defaultReply,
         name: 'Agenda',
         response:
-          'Nao consegui consultar os agendamentos agora. Vou encaminhar para um atendente desmarcar manualmente.',
+          'Não consegui consultar os agendamentos agora. Vou encaminhar para um atendente desmarcar manualmente.',
       };
     }
 
@@ -1525,7 +1527,7 @@ export class WhatsAppClient extends EventEmitter {
         ...this.defaultReply,
         name: 'Agenda',
         response:
-          'Nao consegui consultar seu agendamento agora. Vou encaminhar para um atendente desmarcar manualmente.',
+          'Não consegui consultar seu agendamento agora. Vou encaminhar para um atendente desmarcar manualmente.',
       };
     }
 
@@ -1533,7 +1535,7 @@ export class WhatsAppClient extends EventEmitter {
       return {
         ...this.defaultReply,
         name: 'Agenda',
-        response: 'Nao encontrei nenhum agendamento futuro para desmarcar nesse WhatsApp.',
+        response: 'Não encontrei nenhum agendamento futuro para desmarcar nesse WhatsApp.',
       };
     }
 
@@ -1542,7 +1544,7 @@ export class WhatsAppClient extends EventEmitter {
         ...this.defaultReply,
         name: 'Agenda',
         response:
-          'Encontrei seu agendamento, mas o Google Agenda nao esta conectado agora. Vou encaminhar para um atendente desmarcar manualmente.',
+          'Encontrei seu agendamento, mas o Google Agenda não está conectado agora. Vou encaminhar para um atendente desmarcar manualmente.',
       };
     }
 
@@ -1558,7 +1560,7 @@ export class WhatsAppClient extends EventEmitter {
           throw error;
         }
 
-        this.emitActivity('calendar', 'Evento ja nao existia no Google Agenda. Marcando como cancelado.', {
+        this.emitActivity('calendar', 'Evento já não existia no Google Agenda. Marcando como cancelado.', {
           calendarId: appointment.calendarId,
           eventId: appointment.eventId,
           jid,
@@ -1585,7 +1587,7 @@ export class WhatsAppClient extends EventEmitter {
       return {
         ...this.defaultReply,
         name: 'Google Agenda',
-        response: 'Pronto, desmarquei sua consulta na agenda. Se quiser remarcar outro horario, e so me mandar.',
+        response: 'Pronto, desmarquei sua consulta na agenda. Se quiser remarcar outro horário, é só me mandar.',
       };
     } catch (error) {
       this.emitActivity('error', 'Falha ao cancelar evento no Google Agenda.', { error: error.message, jid });
@@ -1665,14 +1667,14 @@ export class WhatsAppClient extends EventEmitter {
         return {
           ...this.defaultReply,
           name: 'Google Agenda',
-          response: `Ligacao marcada para ${meetingDate}. O especialista responsavel vai chamar pelo telefone/WhatsApp ${data.contactPhone}.`,
+          response: `Ligação marcada para ${meetingDate}. O especialista responsável vai chamar pelo telefone/WhatsApp ${data.contactPhone}.`,
         };
       }
 
       return {
         ...this.defaultReply,
         name: 'Google Agenda',
-        response: `Consulta marcada para ${meetingDate}. Encaminhei para a agenda do especialista responsavel e enviei o convite para ${data.attendeeEmail}.${meetLine}${calendarLine}`,
+        response: `Consulta marcada para ${meetingDate}. Encaminhei para a agenda do especialista responsável e enviei o convite para ${data.attendeeEmail}.${meetLine}${calendarLine}`,
       };
     } catch (error) {
       this.emitActivity('error', 'Falha ao criar evento no Google Agenda.', { error: error.message });
@@ -1688,7 +1690,7 @@ export class WhatsAppClient extends EventEmitter {
 
   async saveAppointment(appointment) {
     if (!this.appointmentStore?.isReady) {
-      this.emitActivity('followup', 'Banco de follow-ups nao configurado. Follow-ups nao foram salvos.', {
+      this.emitActivity('followup', 'Banco de follow-ups não configurado. Follow-ups não foram salvos.', {
         eventId: appointment.eventId,
       });
       return null;
@@ -1738,7 +1740,7 @@ export class WhatsAppClient extends EventEmitter {
       text: automation.response,
       createdAt,
     });
-    this.emitActivity('automation', `Resposta automatica enviada por "${automation.name}".`, { jid });
+    this.emitActivity('automation', `Resposta automática enviada por "${automation.name}".`, { jid });
     await this.recordEvent('message_replied', {
       jid,
       contactName,
@@ -1750,7 +1752,7 @@ export class WhatsAppClient extends EventEmitter {
 
   async sendText(phone, text) {
     if (!this.sock || this.status !== 'connected') {
-      throw new Error('WhatsApp ainda nao esta conectado.');
+      throw new Error('WhatsApp ainda não está conectado.');
     }
 
     const jid = normalizePhone(phone);
@@ -1783,7 +1785,7 @@ export class WhatsAppClient extends EventEmitter {
 
   async sendTextToJid(jid, text, { automationName = null, contactName = jid } = {}) {
     if (!this.sock || this.status !== 'connected') {
-      throw new Error('WhatsApp ainda nao esta conectado.');
+      throw new Error('WhatsApp ainda não está conectado.');
     }
 
     const cleanText = String(text || '').trim();

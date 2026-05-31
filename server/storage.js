@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 const DEFAULT_AUTOMATIONS = [
   {
     id: 'welcome',
-    name: 'Saudacao inicial',
+    name: 'Saudação inicial',
     keyword: 'oi',
     matchMode: 'contains',
     response: 'Olá! Obrigado por chamar. Já recebemos sua mensagem e vamos te responder em breve.',
@@ -16,7 +16,7 @@ const DEFAULT_AUTOMATIONS = [
   },
   {
     id: 'hours',
-    name: 'Horario de atendimento',
+    name: 'Horário de atendimento',
     keyword: 'horario',
     matchMode: 'contains',
     response: 'Nosso atendimento é de segunda a sexta, das 9h às 18h.',
