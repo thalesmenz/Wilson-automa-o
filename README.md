@@ -46,15 +46,17 @@ Para trocar o fallback, ajuste `AUTO_REPLY_TEXT`. A personalidade e as regras co
 
 ## Fluxo comercial
 
-O bot atende de forma formal e direta para reintegracao de credito e regularizacao de restricoes em CPF e CNPJ.
+O bot atende de forma formal e direta para o produto Limpa Nome.
 
-- CPF: analise completa por R$150, roteada como `low_ticket` para a agenda Andre.
-- CNPJ: analise completa por R$250, roteada como `high_ticket` para a agenda Wilson.
-- A analise cobre apontamentos como Serasa, SPC, Boa Vista, Bacen, Cadin, cheque motivo 12 e outros bloqueios que impactam credito, financiamento, rating bancario e linhas de credito.
-- Quem nao aceita pagar a analise e classificado como curioso/descartado e nao vai para agenda.
-- O bot nao promete limpeza garantida, prazo fechado, aprovacao de credito ou financiamento antes da analise.
-- Para marcar, o cliente precisa aceitar a analise paga e informar data, horario e email do convite.
+- Negativado/restrito: Serasa, SPC, Boa Vista, score afetado por restricao ou nome sujo. Classifica como `low_ticket` e roteia para a agenda Andre.
+- Rating bancario baixo: a pessoa nao aparece negativada, mas nao consegue aprovar financiamento, casa, carro, limite ou linha de credito por rating ruim/baixo. Classifica como `high_ticket` e roteia para a agenda Wilson.
+- Se a pessoa nao souber qual e o problema, o bot inicia como `low_ticket` para consulta inicial de negativado.
+- Nos dois casos, a consulta e obrigatoria porque ela identifica exatamente qual problema esta impedindo o credito.
+- Quem nao aceita pagar a consulta e classificado como curioso/descartado e nao vai para agenda.
+- O bot nao promete limpeza garantida, prazo fechado, aprovacao de credito ou financiamento antes da consulta.
+- Para marcar, o cliente precisa aceitar a consulta paga e informar data, horario e email do convite.
 - Quando faltar data e horario, o bot consulta a agenda responsavel e oferece horarios livres antes de pedir uma sugestao aberta.
+- Se o cliente nao tiver email, o bot pode marcar uma ligacao por telefone/WhatsApp no horario escolhido, sem criar Meet, deixando nome e telefone na descricao do evento da agenda correta.
 - Se o cliente pedir para cancelar/desmarcar depois de agendado, o bot cancela o proximo agendamento futuro no Google Agenda e marca como `cancelled` no Supabase.
 
 ## Google Agenda
@@ -117,7 +119,7 @@ GOOGLE_CALENDAR_EVENT_DURATION_MINUTES=30
 
 Compartilhe as agendas low e high com o email da service account. Para gerar Meet, a conta/agenda precisa permitir criacao de conferencias pelo Google Calendar.
 
-O Gemini classifica `CPF` como `low_ticket`, `CNPJ` como `high_ticket` e quem nao aceita pagar a analise como `curious`/descartado. Se vier `unknown`, o bot pergunta se o caso e CPF ou CNPJ antes de escolher a agenda.
+O Gemini classifica `negativado/restrito` como `low_ticket`, `rating bancario baixo` como `high_ticket` e quem nao aceita pagar a consulta como `curious`/descartado. Se vier `unknown`, o bot pergunta se o caso e negativacao ou dificuldade de aprovacao por rating bancario baixo antes de escolher a agenda.
 
 ## Supabase e follow-up
 

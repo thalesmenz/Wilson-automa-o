@@ -444,6 +444,7 @@ export class GoogleCalendarClient {
   async createMeeting({
     attendeeEmail,
     attendeeName,
+    createMeet = Boolean(attendeeEmail),
     description,
     durationMinutes = 30,
     leadType,
@@ -467,32 +468,36 @@ export class GoogleCalendarClient {
           },
         ]
       : undefined;
+    const requestBody = {
+      summary: title,
+      description,
+      start: {
+        dateTime: start.toISOString(),
+        timeZone: this.timeZone,
+      },
+      end: {
+        dateTime: end.toISOString(),
+        timeZone: this.timeZone,
+      },
+      attendees,
+    };
+
+    if (createMeet) {
+      requestBody.conferenceData = {
+        createRequest: {
+          requestId: randomUUID(),
+          conferenceSolutionKey: {
+            type: 'hangoutsMeet',
+          },
+        },
+      };
+    }
 
     const result = await calendar.events.insert({
       calendarId: targetCalendarId,
-      conferenceDataVersion: 1,
+      conferenceDataVersion: createMeet ? 1 : 0,
       sendUpdates: attendeeEmail ? 'all' : 'none',
-      requestBody: {
-        summary: title,
-        description,
-        start: {
-          dateTime: start.toISOString(),
-          timeZone: this.timeZone,
-        },
-        end: {
-          dateTime: end.toISOString(),
-          timeZone: this.timeZone,
-        },
-        attendees,
-        conferenceData: {
-          createRequest: {
-            requestId: randomUUID(),
-            conferenceSolutionKey: {
-              type: 'hangoutsMeet',
-            },
-          },
-        },
-      },
+      requestBody,
     });
 
     return {

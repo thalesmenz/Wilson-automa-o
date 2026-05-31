@@ -63,8 +63,8 @@ const EMPTY_SUMMARY = {
 
 const METRIC_CONFIG = [
   { key: 'messagesResponded', label: 'Mensagens respondidas', trend: 'total', tone: 'green', icon: MessageCircle },
-  { key: 'highTicket', label: 'High ticket', trend: 'Wilson', tone: 'blue', icon: ArrowUpRight },
-  { key: 'lowTicket', label: 'Low ticket', trend: 'Andre', tone: 'teal', icon: UserCheck },
+  { key: 'highTicket', label: 'Rating baixo', trend: 'Wilson', tone: 'blue', icon: ArrowUpRight },
+  { key: 'lowTicket', label: 'Negativados', trend: 'Andre', tone: 'teal', icon: UserCheck },
   { key: 'discarded', label: 'Curiosos descartados', trend: 'sem agenda', tone: 'slate', icon: PieChart },
 ];
 
@@ -177,11 +177,11 @@ function getLeadLabel(lead) {
   }
 
   if (lead.leadType === 'high_ticket') {
-    return 'High ticket';
+    return 'Rating baixo';
   }
 
   if (lead.leadType === 'low_ticket') {
-    return 'Low ticket';
+    return 'Negativado';
   }
 
   return 'Novo';
@@ -462,7 +462,7 @@ export default function App() {
             <ConnectionItem
               icon={CalendarCheck}
               label="Agenda Wilson"
-              meta={highTicketCalendarConnected ? 'High ticket ativo' : googleOauthConfigured ? 'Pronto para OAuth' : 'Nao configurado'}
+              meta={highTicketCalendarConnected ? 'Rating baixo ativo' : googleOauthConfigured ? 'Pronto para OAuth' : 'Nao configurado'}
               tone={getConnectionTone(highTicketCalendarConnected, googleOauthConfigured)}
               action={
                 <button
@@ -480,7 +480,7 @@ export default function App() {
             <ConnectionItem
               icon={CalendarCheck}
               label="Agenda Andre"
-              meta={lowTicketCalendarConnected ? 'Low ticket ativo' : googleOauthConfigured ? 'Pronto para OAuth' : 'Nao configurado'}
+              meta={lowTicketCalendarConnected ? 'Negativado ativo' : googleOauthConfigured ? 'Pronto para OAuth' : 'Nao configurado'}
               tone={getConnectionTone(lowTicketCalendarConnected, googleOauthConfigured)}
               action={
                 <button
