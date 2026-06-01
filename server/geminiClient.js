@@ -5,8 +5,8 @@ Você é um assistente de atendimento do Wilson Sanches no WhatsApp.
 Atue de forma formal, direta e profissional, sempre em português do Brasil.
 Você se apresenta como assistente do Wilson Sanches da Cresce Mais.
 O atendimento Wilson Sanches trabalha com Limpa Nome. Existem dois cenários: nome negativado/restrito em Serasa, SPC, Boa Vista ou score afetado por restrição; e rating bancário baixo, quando a pessoa não está negativada nesses órgãos mas não consegue financiar, aprovar crédito, limite ou linha de crédito.
-Antes de qualificar o problema, pergunte a área de atuação do cliente. Se for agro, direcione para atendimento preferencial por ligação com horário marcado.
-No primeiro contato, apresente-se como assistente do Wilson Sanches antes de perguntar sobre o problema do cliente.
+A primeira pergunta obrigatória é se o atendimento é para CPF ou CNPJ. Se for CPF, siga direto para a qualificação normal do problema. Se for CNPJ, pergunte a área de atuação; se for agro, direcione para atendimento preferencial por ligação com horário marcado.
+No primeiro contato, apresente-se como assistente do Wilson Sanches antes de perguntar se é CPF ou CNPJ.
 Explique que a primeira etapa obrigatória é uma consulta para identificar exatamente qual problema está impedindo o crédito.
 Não prometa garantia absoluta, prazo fechado, aprovação de crédito, financiamento ou limpeza total antes da consulta.
 Não invente documentos, políticas ou etapas. Se faltar informação, pergunte se o caso é negativação ou rating bancário baixo e confirme se a pessoa deseja seguir com a consulta.
@@ -134,7 +134,7 @@ export class GeminiClient {
 
     let result = await requestReply({
       instruction:
-        'Responda pelo Gemini em no máximo 320 caracteres, com até 3 frases completas. Termine sempre com ponto ou pergunta. Não fuja do fluxo pré-estabelecido: interprete a mensagem e conduza para a próxima etapa prevista, sem criar etapas, promessas ou alternativas fora do funil. Se for primeiro contato, apresente-se como assistente do Wilson Sanches da Cresce Mais e pergunte a área de atuação com opções numeradas: 1 Agro, 2 Comércio ou serviços, 3 Indústria, 4 Pessoa física, 5 Outro segmento.',
+        'Responda pelo Gemini em no máximo 320 caracteres, com até 3 frases completas. Termine sempre com ponto ou pergunta. Não fuja do fluxo pré-estabelecido: interprete a mensagem e conduza para a próxima etapa prevista, sem criar etapas, promessas ou alternativas fora do funil. Se for primeiro contato, apresente-se como assistente do Wilson Sanches da Cresce Mais e pergunte se o atendimento é para CPF ou CNPJ com opções numeradas: 1 CPF, 2 CNPJ.',
     });
 
     if (!result.reply) {
@@ -157,6 +157,79 @@ export class GeminiClient {
     return result.reply;
   }
 
+  async answerFlowQuestion({ context = {}, contactName, history = [], text }) {
+    if (!this.isReady) {
+      throw new Error('Gemini não configurado.');
+    }
+
+    const cleanMessage = cleanText(text);
+    if (!cleanMessage) {
+      throw new Error('Mensagem vazia.');
+    }
+
+    const url = `${GEMINI_ENDPOINT}/models/${this.model}:generateContent`;
+    const historyText = formatHistoryForPrompt(history);
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': this.apiKey,
+      },
+      body: JSON.stringify({
+        system_instruction: {
+          parts: [
+            {
+              text: `${this.systemPrompt}
+Responda dúvidas dentro do fluxo pré-estabelecido. Não mude preço, não prometa resultado, não ofereça atendimento gratuito quando há consulta paga e não crie etapas novas.
+Depois de responder, conduza de volta para a decisão da consulta.`,
+            },
+          ],
+        },
+        contents: [
+          {
+            parts: [
+              {
+                text: `Cliente: ${contactName || 'Contato do WhatsApp'}
+Histórico recente:
+${historyText}
+
+Contexto do fluxo:
+${JSON.stringify(context)}
+
+Dúvida atual: ${cleanMessage}
+
+Responda em português do Brasil, com no máximo 360 caracteres, de forma direta. Termine oferecendo estas opções exatamente:
+
+1. Quero seguir com a consulta
+2. Enviar outra dúvida em texto
+3. Não quero pagar agora`,
+              },
+            ],
+          },
+        ],
+        generationConfig: {
+          temperature: 0.25,
+          topP: 0.9,
+          maxOutputTokens: 512,
+        },
+      }),
+    });
+
+    const payload = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      const message = payload?.error?.message || `Gemini retornou HTTP ${response.status}.`;
+      throw new Error(message);
+    }
+
+    const reply = cleanText(extractGeminiText(payload));
+    if (!reply || payload?.candidates?.[0]?.finishReason === 'MAX_TOKENS') {
+      throw new Error('Gemini retornou resposta incompleta.');
+    }
+
+    return reply;
+  }
+
   async analyzeScheduling({ contactName, existing = {}, history = [], nowIso, text, timeZone }) {
     if (!this.isReady) {
       throw new Error('Gemini não configurado.');
@@ -174,17 +247,19 @@ Responda somente JSON válido, sem markdown.
 Use o horário atual e o fuso informados para resolver datas relativas como "amanhã" ou "segunda".
 Use history para entender referências a mensagens anteriores, como "esse", "aquele horário", "o segundo", "não tenho email", "sou do agro", "manda o pix" ou continuações curtas.
 Você deve obedecer ao fluxo pré-estabelecido. A IA serve para interpretar linguagem natural dentro do fluxo, não para criar novos caminhos, mudar preços, pular etapas obrigatórias, prometer resultado, oferecer atendimento gratuito quando há consulta paga ou abandonar a etapa atual.
+Nunca pergunte área de atuação antes de saber se é CPF ou CNPJ. Área de atuação só existe no caminho CNPJ.
 O campo existing.conversationStatus indica a etapa atual do funil. Quando ele existir, nunca reinicie o atendimento: preserve os dados existentes e avance somente a partir dessa etapa.
 Use existing.availableSlotOptions para entender respostas como "o primeiro", "12h", "pode ser o das 13" ou "a segunda opção".
 Regras por etapa:
+- awaiting_document_type: identifique se o atendimento é para CPF ou CNPJ. Se for CPF, siga para qualificação do problema. Se for CNPJ, peça a área de atuação antes de qualificar; se o cliente já informou CNPJ e agro, pode seguir para atendimento preferencial por ligação.
 - awaiting_segment: se o cliente disser que é agro, retorne schedule_meeting com atendimento preferencial por ligação; se ele responder o problema em vez do segmento, classifique leadType e use qualify para seguir sem repetir a abertura.
 - awaiting_qualification: interprete texto livre sobre negativação, Serasa/SPC/Boa Vista, rating baixo, crédito, limite ou financiamento e classifique o leadType correspondente.
 - awaiting_payment_confirmation: frases como "quero pagar", "manda o pix", "como pago", "pode seguir" aceitam a consulta; recusa, preço caro ou grátis descartam; dúvidas pedem mais explicação.
 - awaiting_details: extraia data, horário, email e telefone. Se a pessoa pedir outro dia/horário, mais cedo, mais tarde ou disser que não consegue naquele horário, mantenha o agendamento aberto e não reinicie a qualificação.
 - awaiting_confirmation: confirme somente quando a pessoa aceitar o horário; se pedir troca ou enviar outro horário, retorne schedule_meeting com os novos dados; se cancelar, retorne cancel.
 Se o cliente confirmar algo pendente, use intent "confirm". Se cancelar, use "cancel".
-O produto é Limpa Nome e a primeira etapa obrigatória é uma consulta:
-- Se o cliente disser que atua no agro, agronegócio, produtor rural, fazenda, pecuária, lavoura, soja, milho, café, cana, grãos ou insumos, direcione para atendimento preferencial Cresce Mais por ligação. Use intent "schedule_meeting", leadType "high_ticket", analysisAccepted=true, meetingChannel "phone", phoneCallAccepted=true e não cobre consulta nessa etapa.
+O produto é Limpa Nome e a primeira etapa obrigatória, fora do atendimento preferencial agro/CNPJ, é uma consulta:
+- Se o atendimento for CNPJ e o cliente disser que atua no agro, agronegócio, produtor rural, fazenda, pecuária, lavoura, soja, milho, café, cana, grãos ou insumos, direcione para atendimento preferencial Cresce Mais por ligação. Use intent "schedule_meeting", leadType "high_ticket", analysisAccepted=true, meetingChannel "phone", phoneCallAccepted=true e não cobre consulta nessa etapa.
 - Nome negativado/restrito em Serasa, SPC, Boa Vista, score afetado por negativação ou restrições similares: classifique como low_ticket.
 - Rating bancário baixo: pessoa não aparece negativada nos órgãos, mas banco não aprova financiamento, casa, carro, limite, empréstimo ou linha de crédito por rating ruim/baixo. Classifique como high_ticket.
 - Se a pessoa disser que não sabe qual é o problema, não sabe se está negativada, ou só sabe que não aprova nada, classifique como low_ticket para consulta inicial.

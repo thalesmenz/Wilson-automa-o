@@ -22,7 +22,7 @@ const DEFAULT_AUTO_REPLY = {
   name: 'Resposta automática',
   response:
     process.env.AUTO_REPLY_TEXT ||
-    'Olá, sou assistente do Wilson Sanches da Cresce Mais. Para te direcionar melhor, você atua em qual área?\n\n1. Agro\n2. Comércio ou serviços\n3. Indústria\n4. Pessoa física\n5. Outro segmento',
+    'Olá, sou assistente do Wilson Sanches da Cresce Mais. Para te direcionar melhor, esse atendimento é para CPF ou CNPJ?\n\n1. CPF\n2. CNPJ',
   active: process.env.AUTO_REPLY_ENABLED !== 'false',
   delayMs: Number(process.env.AUTO_REPLY_DELAY_MS || DEFAULT_AUTO_REPLY_DELAY_MS),
   cooldownSeconds: Number(process.env.AUTO_REPLY_COOLDOWN_SECONDS || 300),
@@ -212,8 +212,22 @@ function isSimpleGreeting(text) {
   );
 }
 
+function buildDocumentTypeMessage() {
+  return 'Olá, sou assistente do Wilson Sanches da Cresce Mais. Para te direcionar melhor, esse atendimento é para CPF ou CNPJ?\n\n1. CPF\n2. CNPJ';
+}
+
 function buildSegmentMessage() {
-  return 'Olá, sou assistente do Wilson Sanches da Cresce Mais. Para te direcionar melhor, você atua em qual área?\n\n1. Agro\n2. Comércio ou serviços\n3. Indústria\n4. Pessoa física\n5. Outro segmento';
+  return 'Perfeito. Qual é a área de atuação do CNPJ?\n\n1. Agro\n2. Comércio ou serviços\n3. Indústria\n4. Outro segmento';
+}
+
+function isCpfDocumentTypeText(text) {
+  const normalized = normalizeText(text);
+  return /\b(cpf|pessoa fisica|pf|fisica|meu nome|meu cpf|no cpf|pelo cpf)\b/.test(normalized);
+}
+
+function isCnpjDocumentTypeText(text) {
+  const normalized = normalizeText(text);
+  return /\b(cnpj|pessoa juridica|pj|empresa|empresarial|mei|meu negocio|minha empresa|no cnpj|pelo cnpj)\b/.test(normalized);
 }
 
 function isAgroSegmentText(text) {
@@ -225,7 +239,7 @@ function isAgroSegmentText(text) {
 
 function isNonAgroSegmentText(text) {
   const normalized = normalizeText(text);
-  return /\b(comercio|servicos|servico|industria|pessoa fisica|pf|outro segmento|mei|empresa|lojista|autonomo|autonoma)\b/.test(
+  return /\b(comercio|servicos|servico|industria|outro segmento|lojista|autonomo|autonoma)\b/.test(
     normalized,
   );
 }
@@ -716,10 +730,14 @@ function buildAnalysisDetailsMessage(data) {
   const leadType = normalizeLeadType(data.leadType);
 
   if (leadType === 'high_ticket') {
-    return 'A consulta de rating bancário verifica por que bancos recusam crédito, limite, financiamento ou empréstimo mesmo sem negativação aparente. Ela não promete aprovação garantida; identifica o problema para orientar o próximo passo.\n\n1. Quero seguir com a consulta\n2. Tenho outra dúvida\n3. Não quero pagar agora';
+    return 'A consulta de rating bancário verifica por que bancos recusam crédito, limite, financiamento ou empréstimo mesmo sem negativação aparente. Ela não promete aprovação garantida; identifica o problema para orientar o próximo passo.\n\n1. Quero seguir com a consulta\n2. Enviar outra dúvida em texto\n3. Não quero pagar agora';
   }
 
-  return 'A consulta de negativado verifica restrições em Serasa, SPC, Boa Vista, score e apontamentos que podem impedir crédito. Ela não promete limpeza garantida; identifica o problema para orientar o próximo passo.\n\n1. Quero seguir com a consulta\n2. Tenho outra dúvida\n3. Não quero pagar agora';
+  return 'A consulta de negativado verifica restrições em Serasa, SPC, Boa Vista, score e apontamentos que podem impedir crédito. Ela não promete limpeza garantida; identifica o problema para orientar o próximo passo.\n\n1. Quero seguir com a consulta\n2. Enviar outra dúvida em texto\n3. Não quero pagar agora';
+}
+
+function buildAskForQuestionMessage() {
+  return 'Claro. Me envie sua dúvida em uma frase que eu respondo sem sair do fluxo.\n\n1. Quero seguir com a consulta\n3. Não quero pagar agora';
 }
 
 function buildUnknownProblemOfferMessage() {
@@ -741,6 +759,10 @@ function buildPaymentRefusalMessage() {
 function buildStateFallbackMessage(current) {
   const data = current?.data || {};
   const isPreferredAgro = data.segment === 'agro' || data.preferredService === 'agro';
+
+  if (current?.status === 'awaiting_document_type') {
+    return buildDocumentTypeMessage();
+  }
 
   if (current?.status === 'awaiting_segment') {
     return buildSegmentMessage();
@@ -1401,6 +1423,56 @@ export class WhatsAppClient extends EventEmitter {
     };
   }
 
+  async createCustomQuestionReply({ contactName, current, history, jid, text }) {
+    const data = {
+      ...(current?.data || {}),
+      menu: 'analysis_details',
+    };
+
+    this.scheduling.set(jid, {
+      ...current,
+      data,
+      updatedAt: new Date().toISOString(),
+    });
+
+    if (!this.gemini?.isReady || !this.gemini.answerFlowQuestion) {
+      return {
+        ...this.defaultReply,
+        name: 'Qualificação',
+        response:
+          'Consigo responder dúvidas dentro do fluxo, mas a IA não está disponível agora.\n\n1. Quero seguir com a consulta\n2. Enviar outra dúvida em texto\n3. Não quero pagar agora',
+      };
+    }
+
+    try {
+      const response = await this.gemini.answerFlowQuestion({
+        contactName,
+        context: {
+          conversationStatus: current?.status,
+          leadType: normalizeLeadType(data.leadType),
+          paymentAmount: data.paymentAmount || ANALYSIS_FEES[normalizeLeadType(data.leadType)] || null,
+          product: LEAD_TYPE_LABELS[normalizeLeadType(data.leadType)] || 'consulta',
+        },
+        history: history || buildConversationHistory(this.store?.getConversation?.(jid)),
+        text,
+      });
+
+      return {
+        ...this.defaultReply,
+        name: 'IA',
+        response,
+      };
+    } catch (error) {
+      this.emitActivity('error', 'IA não conseguiu responder a dúvida do fluxo.', { error: error.message, jid });
+      return {
+        ...this.defaultReply,
+        name: 'Qualificação',
+        response:
+          'Posso te explicar dentro do fluxo: a consulta identifica o problema antes de qualquer promessa de solução.\n\n1. Quero seguir com a consulta\n2. Enviar outra dúvida em texto\n3. Não quero pagar agora',
+      };
+    }
+  }
+
   async createSchedulingReply({ contactName, history = null, isGroup, jid, text }) {
     if (isGroup) {
       return null;
@@ -1415,31 +1487,128 @@ export class WhatsAppClient extends EventEmitter {
       const data = {};
       this.scheduling.set(jid, {
         data,
-        status: 'awaiting_segment',
+        status: 'awaiting_document_type',
         updatedAt: new Date().toISOString(),
       });
 
       return {
         ...this.defaultReply,
         name: 'Qualificação',
-        response: buildSegmentMessage(),
+        response: buildDocumentTypeMessage(),
       };
     }
 
-    if (!current && menuOption) {
+    if (!current && (menuOption || isCpfDocumentTypeText(text) || isCnpjDocumentTypeText(text))) {
       current = {
         data: {},
-        status: 'awaiting_segment',
+        status: 'awaiting_document_type',
         updatedAt: new Date().toISOString(),
       };
     }
 
-    if (!current && isAgroSegmentText(text)) {
-      const data = normalizeSchedulePhone(buildPreferredAgroData({}, phoneCallPreference), { jid, text });
-      return this.createMissingDetailsReply({ data, jid, missing: getScheduleMissing(data) });
+    if (!current && (isAgroSegmentText(text) || isNonAgroSegmentText(text))) {
+      this.scheduling.set(jid, {
+        data: {},
+        status: 'awaiting_document_type',
+        updatedAt: new Date().toISOString(),
+      });
+
+      return {
+        ...this.defaultReply,
+        name: 'Qualificação',
+        response: buildDocumentTypeMessage(),
+      };
+    }
+
+    if (current?.status === 'awaiting_document_type') {
+      if (menuOption === 1 || isCpfDocumentTypeText(text)) {
+        const data = {
+          ...current.data,
+          documentType: 'cpf',
+          segment: 'person',
+        };
+
+        this.scheduling.set(jid, {
+          data,
+          status: 'awaiting_qualification',
+          updatedAt: new Date().toISOString(),
+        });
+
+        return {
+          ...this.defaultReply,
+          name: 'Qualificação',
+          response: buildQualificationMessage(data),
+        };
+      }
+
+      if (menuOption === 2 || isCnpjDocumentTypeText(text)) {
+        const baseData = {
+          ...current.data,
+          documentType: 'cnpj',
+        };
+
+        if (isAgroSegmentText(text)) {
+          const data = normalizeSchedulePhone(buildPreferredAgroData(baseData, phoneCallPreference), { jid, text });
+          return this.createMissingDetailsReply({ data, jid, missing: getScheduleMissing(data) });
+        }
+
+        if (isNonAgroSegmentText(text)) {
+          const normalized = normalizeText(text);
+          const data = {
+            ...baseData,
+            segment: /\b(industria)\b/.test(normalized) ? 'industry' : /\b(comercio|servicos|servico|lojista)\b/.test(normalized) ? 'commerce_services' : 'other',
+          };
+
+          this.scheduling.set(jid, {
+            data,
+            status: 'awaiting_qualification',
+            updatedAt: new Date().toISOString(),
+          });
+
+          return {
+            ...this.defaultReply,
+            name: 'Qualificação',
+            response: buildQualificationMessage(data),
+          };
+        }
+
+        this.scheduling.set(jid, {
+          data: baseData,
+          status: 'awaiting_segment',
+          updatedAt: new Date().toISOString(),
+        });
+
+        return {
+          ...this.defaultReply,
+          name: 'Qualificação',
+          response: buildSegmentMessage(),
+        };
+      }
+
+      return this.createStateFallbackReply({ current });
     }
 
     if (current?.status === 'awaiting_segment') {
+      if (isCpfDocumentTypeText(text)) {
+        const data = {
+          ...current.data,
+          documentType: 'cpf',
+          segment: 'person',
+        };
+
+        this.scheduling.set(jid, {
+          data,
+          status: 'awaiting_qualification',
+          updatedAt: new Date().toISOString(),
+        });
+
+        return {
+          ...this.defaultReply,
+          name: 'Qualificação',
+          response: buildQualificationMessage(data),
+        };
+      }
+
       if (menuOption === 1 || isAgroSegmentText(text)) {
         const data = normalizeSchedulePhone(buildPreferredAgroData(current.data, phoneCallPreference), { jid, text });
         const missing = getScheduleMissing(data);
@@ -1488,10 +1657,10 @@ export class WhatsAppClient extends EventEmitter {
         };
       }
 
-      if ((menuOption && menuOption >= 2 && menuOption <= 5) || isNonAgroSegmentText(text)) {
+      if ((menuOption && menuOption >= 2 && menuOption <= 4) || isNonAgroSegmentText(text)) {
         const data = {
           ...current.data,
-          segment: menuOption === 4 ? 'person' : menuOption === 2 ? 'commerce_services' : menuOption === 3 ? 'industry' : 'other',
+          segment: menuOption === 2 ? 'commerce_services' : menuOption === 3 ? 'industry' : 'other',
         };
 
         this.scheduling.set(jid, {
@@ -1786,16 +1955,46 @@ export class WhatsAppClient extends EventEmitter {
         };
       }
 
+      if (menuOption === 1 || isPaymentAcceptance(text)) {
+        return this.createPaymentAcceptedReply({ contactName, current, jid, text });
+      }
+
+      if (['analysis_details', 'awaiting_custom_question'].includes(current.data?.menu) && !menuOption) {
+        return this.createCustomQuestionReply({ contactName, current, history, jid, text });
+      }
+
       if (menuOption === 2 || isMoreInfoRequest(text)) {
+        if (current.data?.menu === 'analysis_details' || current.data?.menu === 'awaiting_custom_question') {
+          this.scheduling.set(jid, {
+            ...current,
+            data: {
+              ...current.data,
+              menu: 'awaiting_custom_question',
+            },
+            updatedAt: new Date().toISOString(),
+          });
+
+          return {
+            ...this.defaultReply,
+            name: 'Qualificação',
+            response: buildAskForQuestionMessage(),
+          };
+        }
+
+        this.scheduling.set(jid, {
+          ...current,
+          data: {
+            ...current.data,
+            menu: 'analysis_details',
+          },
+          updatedAt: new Date().toISOString(),
+        });
+
         return {
           ...this.defaultReply,
           name: 'Qualificação',
           response: buildAnalysisDetailsMessage(current.data),
         };
-      }
-
-      if (menuOption === 1 || isPaymentAcceptance(text)) {
-        return this.createPaymentAcceptedReply({ contactName, current, jid, text });
       }
     }
 
@@ -1820,7 +2019,7 @@ export class WhatsAppClient extends EventEmitter {
 
     if (analysis.intent === 'cancel' && current) {
       this.scheduling.delete(jid);
-      if (['awaiting_segment', 'awaiting_qualification', 'awaiting_payment_confirmation'].includes(current.status)) {
+      if (['awaiting_document_type', 'awaiting_segment', 'awaiting_qualification', 'awaiting_payment_confirmation'].includes(current.status)) {
         await this.recordLeadStatus({
           contactName,
           jid,
