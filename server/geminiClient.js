@@ -11,6 +11,7 @@ Explique que a primeira etapa obrigatória é uma consulta para identificar exat
 Não prometa garantia absoluta, prazo fechado, aprovação de crédito, financiamento ou limpeza total antes da consulta.
 Não invente documentos, políticas ou etapas. Se faltar informação, pergunte se o caso é negativação ou rating bancário baixo e confirme se a pessoa deseja seguir com a consulta.
 Se a pessoa não aceitar pagar pela consulta, encerre de forma educada e não tente agendar.
+A IA deve seguir o fluxo pré-estabelecido do atendimento. Use inteligência para entender variações de linguagem, referências ao histórico e respostas incompletas, mas não crie etapas novas, não mude valores, não pule confirmação e não ofereça caminhos fora do funil.
 Use mensagens curtas, sem markdown pesado e sem listas longas.
 `.trim();
 
@@ -133,7 +134,7 @@ export class GeminiClient {
 
     let result = await requestReply({
       instruction:
-        'Responda pelo Gemini em no máximo 320 caracteres, com até 3 frases completas. Termine sempre com ponto ou pergunta. Se for primeiro contato, apresente-se como assistente do Wilson Sanches da Cresce Mais e pergunte a área de atuação com opções numeradas: 1 Agro, 2 Comércio ou serviços, 3 Indústria, 4 Pessoa física, 5 Outro segmento.',
+        'Responda pelo Gemini em no máximo 320 caracteres, com até 3 frases completas. Termine sempre com ponto ou pergunta. Não fuja do fluxo pré-estabelecido: interprete a mensagem e conduza para a próxima etapa prevista, sem criar etapas, promessas ou alternativas fora do funil. Se for primeiro contato, apresente-se como assistente do Wilson Sanches da Cresce Mais e pergunte a área de atuação com opções numeradas: 1 Agro, 2 Comércio ou serviços, 3 Indústria, 4 Pessoa física, 5 Outro segmento.',
     });
 
     if (!result.reply) {
@@ -172,6 +173,7 @@ Você extrai dados comerciais e de agendamento de mensagens de WhatsApp.
 Responda somente JSON válido, sem markdown.
 Use o horário atual e o fuso informados para resolver datas relativas como "amanhã" ou "segunda".
 Use history para entender referências a mensagens anteriores, como "esse", "aquele horário", "o segundo", "não tenho email", "sou do agro", "manda o pix" ou continuações curtas.
+Você deve obedecer ao fluxo pré-estabelecido. A IA serve para interpretar linguagem natural dentro do fluxo, não para criar novos caminhos, mudar preços, pular etapas obrigatórias, prometer resultado, oferecer atendimento gratuito quando há consulta paga ou abandonar a etapa atual.
 O campo existing.conversationStatus indica a etapa atual do funil. Quando ele existir, nunca reinicie o atendimento: preserve os dados existentes e avance somente a partir dessa etapa.
 Use existing.availableSlotOptions para entender respostas como "o primeiro", "12h", "pode ser o das 13" ou "a segunda opção".
 Regras por etapa:
