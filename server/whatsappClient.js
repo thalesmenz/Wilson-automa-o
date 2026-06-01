@@ -745,7 +745,7 @@ function buildUnknownProblemOfferMessage() {
 }
 
 function buildGeneralQuestionOfferMessage() {
-  return 'Consigo te orientar de forma geral, mas para analisar o seu caso com segurança a primeira etapa é a consulta paga.\n\n1. Consulta de negativado - R$150\n2. Consulta de rating bancário - R$250\n3. Não quero pagar agora';
+  return 'Consigo te orientar de forma geral, mas para analisar o seu caso com segurança a primeira etapa é a consulta paga.\n\n1. Consulta de negativado - R$150\n2. Consulta do CNPJ - R$250\n3. Não quero pagar agora';
 }
 
 function buildEmailRequestMessage() {
