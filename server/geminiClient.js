@@ -3,7 +3,9 @@ const GEMINI_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta';
 const DEFAULT_SYSTEM_PROMPT = `
 Você é um assistente de atendimento do Wilson Sanches no WhatsApp.
 Atue de forma formal, direta e profissional, sempre em português do Brasil.
+Você se apresenta como assistente do Wilson Sanches da Cresce Mais.
 O atendimento Wilson Sanches trabalha com Limpa Nome. Existem dois cenários: nome negativado/restrito em Serasa, SPC, Boa Vista ou score afetado por restrição; e rating bancário baixo, quando a pessoa não está negativada nesses órgãos mas não consegue financiar, aprovar crédito, limite ou linha de crédito.
+Antes de qualificar o problema, pergunte a área de atuação do cliente. Se for agro, direcione para atendimento preferencial por ligação com horário marcado.
 No primeiro contato, apresente-se como assistente do Wilson Sanches antes de perguntar sobre o problema do cliente.
 Explique que a primeira etapa obrigatória é uma consulta para identificar exatamente qual problema está impedindo o crédito.
 Não prometa garantia absoluta, prazo fechado, aprovação de crédito, financiamento ou limpeza total antes da consulta.
@@ -35,6 +37,19 @@ function isCompleteSentence(value) {
   return /[.!?]$/.test(String(value || '').trim());
 }
 
+function formatHistoryForPrompt(history = []) {
+  const lines = history
+    .slice(-14)
+    .map((message) => {
+      const speaker = message.role === 'assistant' ? 'Assistente' : 'Cliente';
+      const text = cleanText(message.text);
+      return text ? `${speaker}: ${text}` : null;
+    })
+    .filter(Boolean);
+
+  return lines.length ? lines.join('\n') : 'Sem histórico recente.';
+}
+
 export class GeminiClient {
   constructor({
     apiKey = process.env.GEMINI_API_KEY,
@@ -60,7 +75,7 @@ export class GeminiClient {
     };
   }
 
-  async generateReply({ text, contactName }) {
+  async generateReply({ text, contactName, history = [] }) {
     if (!this.isReady) {
       throw new Error('Gemini não configurado.');
     }
@@ -71,6 +86,7 @@ export class GeminiClient {
     }
 
     const url = `${GEMINI_ENDPOINT}/models/${this.model}:generateContent`;
+    const historyText = formatHistoryForPrompt(history);
     const requestReply = async ({ instruction, maxOutputTokens = 512, temperature = 0.35 }) => {
       const response = await fetch(url, {
         method: 'POST',
@@ -86,7 +102,7 @@ export class GeminiClient {
             {
               parts: [
                 {
-                  text: `Cliente: ${contactName || 'Contato do WhatsApp'}\nMensagem: ${cleanMessage}`,
+                  text: `Cliente: ${contactName || 'Contato do WhatsApp'}\nHistórico recente:\n${historyText}\n\nMensagem atual: ${cleanMessage}`,
                 },
                 {
                   text: instruction,
@@ -117,7 +133,7 @@ export class GeminiClient {
 
     let result = await requestReply({
       instruction:
-        'Responda pelo Gemini em no máximo 320 caracteres, com até 3 frases completas. Termine sempre com ponto ou pergunta. Se for primeiro contato, apresente-se como assistente do Wilson Sanches e pergunte com opções numeradas: 1 nome negativado/restrito, 2 banco não aprova crédito/financiamento/limite, 3 não sabe o problema, 4 só quer tirar dúvida.',
+        'Responda pelo Gemini em no máximo 320 caracteres, com até 3 frases completas. Termine sempre com ponto ou pergunta. Se for primeiro contato, apresente-se como assistente do Wilson Sanches da Cresce Mais e pergunte a área de atuação com opções numeradas: 1 Agro, 2 Comércio ou serviços, 3 Indústria, 4 Pessoa física, 5 Outro segmento.',
     });
 
     if (!result.reply) {
@@ -140,7 +156,7 @@ export class GeminiClient {
     return result.reply;
   }
 
-  async analyzeScheduling({ contactName, existing = {}, nowIso, text, timeZone }) {
+  async analyzeScheduling({ contactName, existing = {}, history = [], nowIso, text, timeZone }) {
     if (!this.isReady) {
       throw new Error('Gemini não configurado.');
     }
@@ -155,8 +171,18 @@ export class GeminiClient {
 Você extrai dados comerciais e de agendamento de mensagens de WhatsApp.
 Responda somente JSON válido, sem markdown.
 Use o horário atual e o fuso informados para resolver datas relativas como "amanhã" ou "segunda".
+Use history para entender referências a mensagens anteriores, como "esse", "aquele horário", "o segundo", "não tenho email", "sou do agro", "manda o pix" ou continuações curtas.
+O campo existing.conversationStatus indica a etapa atual do funil. Quando ele existir, nunca reinicie o atendimento: preserve os dados existentes e avance somente a partir dessa etapa.
+Use existing.availableSlotOptions para entender respostas como "o primeiro", "12h", "pode ser o das 13" ou "a segunda opção".
+Regras por etapa:
+- awaiting_segment: se o cliente disser que é agro, retorne schedule_meeting com atendimento preferencial por ligação; se ele responder o problema em vez do segmento, classifique leadType e use qualify para seguir sem repetir a abertura.
+- awaiting_qualification: interprete texto livre sobre negativação, Serasa/SPC/Boa Vista, rating baixo, crédito, limite ou financiamento e classifique o leadType correspondente.
+- awaiting_payment_confirmation: frases como "quero pagar", "manda o pix", "como pago", "pode seguir" aceitam a consulta; recusa, preço caro ou grátis descartam; dúvidas pedem mais explicação.
+- awaiting_details: extraia data, horário, email e telefone. Se a pessoa pedir outro dia/horário, mais cedo, mais tarde ou disser que não consegue naquele horário, mantenha o agendamento aberto e não reinicie a qualificação.
+- awaiting_confirmation: confirme somente quando a pessoa aceitar o horário; se pedir troca ou enviar outro horário, retorne schedule_meeting com os novos dados; se cancelar, retorne cancel.
 Se o cliente confirmar algo pendente, use intent "confirm". Se cancelar, use "cancel".
 O produto é Limpa Nome e a primeira etapa obrigatória é uma consulta:
+- Se o cliente disser que atua no agro, agronegócio, produtor rural, fazenda, pecuária, lavoura, soja, milho, café, cana, grãos ou insumos, direcione para atendimento preferencial Cresce Mais por ligação. Use intent "schedule_meeting", leadType "high_ticket", analysisAccepted=true, meetingChannel "phone", phoneCallAccepted=true e não cobre consulta nessa etapa.
 - Nome negativado/restrito em Serasa, SPC, Boa Vista, score afetado por negativação ou restrições similares: classifique como low_ticket.
 - Rating bancário baixo: pessoa não aparece negativada nos órgãos, mas banco não aprova financiamento, casa, carro, limite, empréstimo ou linha de crédito por rating ruim/baixo. Classifique como high_ticket.
 - Se a pessoa disser que não sabe qual é o problema, não sabe se está negativada, ou só sabe que não aprova nada, classifique como low_ticket para consulta inicial.
@@ -205,6 +231,7 @@ Formato:
     const analysisContext = JSON.stringify({
       contactName,
       existing,
+      history,
       message: cleanMessage,
       nowIso,
       timeZone,

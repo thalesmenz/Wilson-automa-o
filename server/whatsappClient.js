@@ -22,12 +22,14 @@ const DEFAULT_AUTO_REPLY = {
   name: 'Resposta automática',
   response:
     process.env.AUTO_REPLY_TEXT ||
-    'Olá, tudo bem? Sou o assistente do Wilson Sanches. Trabalhamos com Limpa Nome e análise de crédito para identificar problemas de negativação ou rating bancário baixo. Seu caso é nome negativado/restrito ou dificuldade de aprovação em banco/financiamento?',
+    'Olá, sou assistente do Wilson Sanches da Cresce Mais. Para te direcionar melhor, você atua em qual área?\n\n1. Agro\n2. Comércio ou serviços\n3. Indústria\n4. Pessoa física\n5. Outro segmento',
   active: process.env.AUTO_REPLY_ENABLED !== 'false',
   delayMs: Number(process.env.AUTO_REPLY_DELAY_MS || DEFAULT_AUTO_REPLY_DELAY_MS),
   cooldownSeconds: Number(process.env.AUTO_REPLY_COOLDOWN_SECONDS || 300),
   includeGroups: RESPOND_TO_GROUPS,
 };
+const MAX_AI_HISTORY_MESSAGES = 14;
+const MAX_AI_HISTORY_TEXT_LENGTH = 500;
 
 const DEFAULT_MEETING_DURATION_MINUTES = Number(process.env.GOOGLE_CALENDAR_EVENT_DURATION_MINUTES || 30);
 const GOOGLE_CALENDAR_TIME_ZONE = process.env.GOOGLE_CALENDAR_TIME_ZONE || 'America/Sao_Paulo';
@@ -49,7 +51,7 @@ const LEAD_ROUTES = {
   meeting_created: 'Agenda',
   new: 'Aguardando',
 };
-const WEEKDAY_LABELS = ['domingo', 'segunda', 'terca', 'quarta', 'quinta', 'sexta', 'sabado'];
+const WEEKDAY_LABELS = ['domingo', 'segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado'];
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -210,14 +212,32 @@ function isSimpleGreeting(text) {
   );
 }
 
+function buildSegmentMessage() {
+  return 'Olá, sou assistente do Wilson Sanches da Cresce Mais. Para te direcionar melhor, você atua em qual área?\n\n1. Agro\n2. Comércio ou serviços\n3. Indústria\n4. Pessoa física\n5. Outro segmento';
+}
+
+function isAgroSegmentText(text) {
+  const normalized = normalizeText(text);
+  return /\b(agro|agronegocio|agricola|agricultura|produtor rural|produtora rural|rural|fazenda|fazendeiro|pecuaria|pecuarista|gado|boi|soja|milho|cafe|cana|plantio|lavoura|safra|graos|insumos)\b/.test(
+    normalized,
+  );
+}
+
+function isNonAgroSegmentText(text) {
+  const normalized = normalizeText(text);
+  return /\b(comercio|servicos|servico|industria|pessoa fisica|pf|outro segmento|mei|empresa|lojista|autonomo|autonoma)\b/.test(
+    normalized,
+  );
+}
+
 function isConfirmation(text) {
-  return /^(sim|s|pode|pode sim|pode seguir|aceito|aceito sim|confirmo|confirmado|ok|fechado|manda|marcar)$/i.test(
+  return /^(sim|s|ss|pode|pode sim|pode ser|pode seguir|aceito|aceito sim|confirmo|confirmado|ok|okay|fechado|manda|manda ver|marcar|marca|agenda|agendar|vamos|bora|beleza|blz|ta bom|perfeito|isso|isso mesmo)$/i.test(
     normalizeText(text),
   );
 }
 
 function isCancellation(text) {
-  return /^(nao|n|nao quero|nao quero pagar|nao vou pagar|sem pagar|gratis|gratuito|caro|cancela|cancelar|deixa|deixa pra la)$/i.test(
+  return /^(nao|n|nao quero|nao quero pagar|nao quero seguir|nao vou pagar|sem pagar|gratis|gratuito|caro|cancela|cancelar|agora nao|nao agora|deixa|deixa pra la|deixa quieto|vou ver depois|depois eu vejo|sem interesse)$/i.test(
     normalizeText(text),
   );
 }
@@ -229,7 +249,54 @@ function isMoreInfoRequest(text) {
 
 function isChangeScheduleRequest(text) {
   const normalized = normalizeText(text);
-  return /\b(trocar|mudar|alterar|outro horario|outro dia|remarcar|reagendar|novo horario)\b/.test(normalized);
+  return (
+    /\b(trocar|mudar|alterar|remarcar|reagendar|novo horario|nova data)\b/.test(normalized) ||
+    /\b(outro|outra|outros|outras)\s+(horario|dia|data|opcao|opcoes)\b/.test(normalized) ||
+    /\b(tem|manda|envia|me passa|quais|mostra).*\b(outro|outra|outros|outras)\b/.test(normalized) ||
+    /\b(mais cedo|mais tarde|de manha|a tarde|a noite)\b/.test(normalized) ||
+    /\b(esse|essa|nesse|nessa) (horario|dia|data)?\s*(nao|n) (da|consigo|posso)\b/.test(normalized) ||
+    /\b(nao|n) (da|consigo|posso) (nesse|nessa|esse|essa)\b/.test(normalized)
+  );
+}
+
+function isPaymentAcceptance(text) {
+  const normalized = normalizeText(text);
+  return (
+    isConfirmation(text) ||
+    /\b(quero seguir|quero pagar|vou pagar|aceito pagar|pode cobrar|pode fazer|seguir com a consulta|fazer a consulta)\b/.test(
+      normalized,
+    ) ||
+    /\b(manda|envia|passa).*\b(pix|pagamento)\b/.test(normalized) ||
+    /\b(qual|como).*\b(pix|pagamento|pago|pagar)\b/.test(normalized)
+  );
+}
+
+function inferLeadTypeFromProblemText(text) {
+  const normalized = normalizeText(text);
+  const saysNotNegative = /\b(nao|n|sem).*\b(negativado|negativada|nome sujo|restricao|restrito|restrita|serasa|spc)\b/.test(
+    normalized,
+  );
+  const lowTicket = /\b(negativado|negativada|nome sujo|restricao|restrito|restrita|serasa|spc|boa vista|protesto|divida|pendencia|apontamento)\b/.test(
+    normalized,
+  );
+  const highTicket =
+    /\b(rating|banco nao aprova|bancos nao aprovam|nao aprova credito|nao aprova financiamento|nao consigo credito|nao consigo financiamento|financiamento|limite|emprestimo|linha de credito|credito negado|recusou credito|recusa credito)\b/.test(
+      normalized,
+    );
+
+  if (saysNotNegative && highTicket) {
+    return 'high_ticket';
+  }
+
+  if (lowTicket) {
+    return 'low_ticket';
+  }
+
+  if (highTicket) {
+    return 'high_ticket';
+  }
+
+  return null;
 }
 
 function isAppointmentCancellation(text) {
@@ -277,6 +344,29 @@ function isUnsureAboutProblem(text) {
 
 function compactObject(value) {
   return Object.fromEntries(Object.entries(value || {}).filter(([, item]) => item !== undefined && item !== null && item !== ''));
+}
+
+function truncateForAiHistory(value) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  if (text.length <= MAX_AI_HISTORY_TEXT_LENGTH) {
+    return text;
+  }
+
+  return `${text.slice(0, MAX_AI_HISTORY_TEXT_LENGTH - 1).trim()}…`;
+}
+
+function buildConversationHistory(conversation, { limit = MAX_AI_HISTORY_MESSAGES } = {}) {
+  return (conversation?.messages || [])
+    .slice(-limit)
+    .map((message) =>
+      compactObject({
+        role: message.direction === 'out' ? 'assistant' : 'user',
+        text: truncateForAiHistory(message.text),
+        createdAt: message.createdAt,
+        automationName: message.automationName,
+      }),
+    )
+    .filter((message) => message.text);
 }
 
 function normalizeLeadType(value) {
@@ -441,13 +531,13 @@ function getSlotParts(value) {
     hour: lookup.hour,
     minute: lookup.minute,
     month: lookup.month,
-    weekday: normalizeText(lookup.weekday),
+    weekday: lookup.weekday,
   };
 }
 
 function formatAvailableSlot(slot) {
   const parts = getSlotParts(slot.startDateTime);
-  const weekday = WEEKDAY_LABELS.find((label) => normalizeText(label) === parts.weekday) || parts.weekday;
+  const weekday = parts.weekday || WEEKDAY_LABELS[new Date(slot.startDateTime).getDay()] || '';
   return `${weekday}, ${parts.day}/${parts.month} às ${parts.hour}:${parts.minute}`;
 }
 
@@ -470,7 +560,7 @@ function buildMissingScheduleMessage(missing) {
   return `Perfeito. Para seguir, me envie ${formatPtList(missing)} para eu criar o convite no Google Agenda.`;
 }
 
-function buildAvailableSlotsMessage(slots, missing) {
+function buildAvailableSlotsMessage(slots, missing, { heading = 'Tenho estes horários disponíveis' } = {}) {
   if (!slots.length) {
     return buildMissingScheduleMessage(missing);
   }
@@ -483,7 +573,70 @@ function buildAvailableSlotsMessage(slots, missing) {
     : needsPhone
       ? 'Responda com o número do horário ou envie outro dia e horário. Também confirme o telefone com DDD para a ligação.'
       : 'Responda com o número do horário ou envie outro dia e horário.';
-  return `Tenho estes horários disponíveis:\n${options}\n${emailLine}`;
+  return `${heading}:\n${options}\n${emailLine}`;
+}
+
+function buildPreferredAvailableSlotsMessage(slots, missing, { heading = 'Tenho estes horários disponíveis' } = {}) {
+  if (!slots.length) {
+    return buildPreferredMissingScheduleMessage(missing);
+  }
+
+  const options = slots.map((slot, index) => `${index + 1}) ${formatAvailableSlot(slot)}`).join('\n');
+  const needsPhone = missing.includes('telefone para ligação');
+  const phoneLine = needsPhone ? '\n\nTambém me confirme o telefone com DDD para a ligação.' : '';
+
+  return `Perfeito. A Cresce Mais quer te dar um atendimento preferencial.\n\n${heading}:\n${options}\n\nResponda com o número do horário ou envie outro dia e horário.${phoneLine}`;
+}
+
+function buildPreferredMissingScheduleMessage(missing) {
+  const needsSchedule = missing.includes('data e horário');
+  const needsPhone = missing.includes('telefone para ligação');
+
+  if (needsSchedule && needsPhone) {
+    return 'Perfeito. A Cresce Mais quer te dar um atendimento preferencial.\n\nMe envie um dia e horário de preferência e confirme o telefone com DDD para a ligação.';
+  }
+
+  if (needsSchedule) {
+    return 'Perfeito. A Cresce Mais quer te dar um atendimento preferencial.\n\nMe envie um dia e horário de preferência para a ligação.';
+  }
+
+  if (needsPhone) {
+    return 'Perfeito. A Cresce Mais quer te dar um atendimento preferencial.\n\nMe confirme o telefone com DDD para a ligação.';
+  }
+
+  return 'Perfeito. A Cresce Mais quer te dar um atendimento preferencial.';
+}
+
+function buildPreferredAgroData(current = {}, next = {}) {
+  return normalizeSchedulePhone(
+    mergeScheduleData(current, {
+      analysisAccepted: true,
+      calendarLeadType: 'high_ticket',
+      durationMinutes: DEFAULT_MEETING_DURATION_MINUTES,
+      leadType: 'high_ticket',
+      meetingChannel: 'phone',
+      notes: 'Atendimento preferencial Cresce Mais para lead do agro.',
+      paymentAmount: null,
+      phoneCallAccepted: true,
+      preferredService: 'agro',
+      segment: 'agro',
+      title: 'Atendimento preferencial Cresce Mais',
+      ...next,
+    }),
+  );
+}
+
+function getLaterSlotsSearchDate(slots = []) {
+  const latestStart = slots
+    .map((slot) => new Date(slot.startDateTime))
+    .filter((date) => !Number.isNaN(date.getTime()))
+    .reduce((latest, date) => Math.max(latest, date.getTime()), 0);
+
+  if (!latestStart) {
+    return new Date();
+  }
+
+  return new Date(latestStart + 12 * 60 * 60 * 1000);
 }
 
 function findSelectedAvailableSlot(text, slots = []) {
@@ -514,7 +667,27 @@ function findSelectedAvailableSlot(text, slots = []) {
   ];
   const wordIndex = wordMap.findIndex((words) => words.some((word) => normalized.includes(word)));
 
-  return wordIndex >= 0 ? slots[wordIndex] || null : null;
+  if (wordIndex >= 0) {
+    return slots[wordIndex] || null;
+  }
+
+  const timeMatch = normalized.match(/\b(?:as\s*)?(\d{1,2})(?:(?::|h)(\d{2}))?h?\b/);
+  if (!timeMatch) {
+    return null;
+  }
+
+  const requestedHour = Number(timeMatch[1]);
+  const requestedMinute = Number(timeMatch[2] || 0);
+  if (!Number.isFinite(requestedHour) || requestedHour > 23 || requestedMinute > 59) {
+    return null;
+  }
+
+  return (
+    slots.find((slot) => {
+      const parts = getSlotParts(slot.startDateTime);
+      return Number(parts.hour) === requestedHour && Number(parts.minute) === requestedMinute;
+    }) || null
+  );
 }
 
 function buildQualificationMessage(data) {
@@ -565,9 +738,72 @@ function buildPaymentRefusalMessage() {
   return 'Sem problema. Nesse caso, não conseguimos avançar com a consulta agora. Caso queira seguir depois, é só chamar.';
 }
 
+function buildStateFallbackMessage(current) {
+  const data = current?.data || {};
+  const isPreferredAgro = data.segment === 'agro' || data.preferredService === 'agro';
+
+  if (current?.status === 'awaiting_segment') {
+    return buildSegmentMessage();
+  }
+
+  if (current?.status === 'awaiting_qualification') {
+    return data.menu === 'curious_offer' ? buildGeneralQuestionOfferMessage() : buildQualificationMessage(data);
+  }
+
+  if (current?.status === 'awaiting_payment_confirmation') {
+    return data.menu === 'curious_offer' ? buildGeneralQuestionOfferMessage() : buildAnalysisOfferMessage(data);
+  }
+
+  if (current?.status === 'awaiting_details') {
+    const missing = getScheduleMissing(data);
+    if (!missing.length) {
+      return buildConfirmationMessage(data);
+    }
+
+    if (Array.isArray(data.availableSlots) && data.availableSlots.length && missing.includes('data e horário')) {
+      return isPreferredAgro
+        ? buildPreferredAvailableSlotsMessage(data.availableSlots, missing)
+        : buildAvailableSlotsMessage(data.availableSlots, missing);
+    }
+
+    return isPreferredAgro ? buildPreferredMissingScheduleMessage(missing) : buildMissingScheduleMessage(missing);
+  }
+
+  if (current?.status === 'awaiting_confirmation') {
+    const missing = getScheduleMissing(data);
+    if (missing.length) {
+      return isPreferredAgro ? buildPreferredMissingScheduleMessage(missing) : buildMissingScheduleMessage(missing);
+    }
+
+    return buildConfirmationMessage(data);
+  }
+
+  return null;
+}
+
+function buildAnalysisExistingContext(current) {
+  const data = current?.data || {};
+  return compactObject({
+    ...data,
+    conversationStatus: current?.status,
+    missing: current?.data ? getScheduleMissing(data) : undefined,
+    availableSlotOptions: Array.isArray(data.availableSlots)
+      ? data.availableSlots.map((slot, index) => ({
+          option: index + 1,
+          label: formatAvailableSlot(slot),
+          startDateTime: slot.startDateTime,
+        }))
+      : undefined,
+  });
+}
+
 function buildConfirmationMessage(data) {
   const when = formatMeetingDate(data.startDateTime);
   const duration = Number(data.durationMinutes || DEFAULT_MEETING_DURATION_MINUTES);
+  if (data.segment === 'agro' || data.preferredService === 'agro') {
+    return `Perfeito. Posso marcar a ligação de atendimento preferencial Cresce Mais para ${when}, com duração de ${duration} minutos, pelo telefone ${data.contactPhone}?\n\n1. Sim, confirmar\n2. Quero trocar o horário\n3. Cancelar`;
+  }
+
   const leadType = LEAD_TYPE_LABELS[normalizeLeadType(data.leadType)];
   if (isPhoneCallSchedule(data)) {
     return `Perfeito. Posso marcar a ligação de ${leadType} para ${when}, com duração de ${duration} minutos, pelo telefone ${data.contactPhone}?\n\n1. Sim, confirmar\n2. Quero trocar o horário\n3. Cancelar`;
@@ -577,6 +813,10 @@ function buildConfirmationMessage(data) {
 }
 
 function buildCalendarTitle(data, contactName) {
+  if (data.segment === 'agro' || data.preferredService === 'agro') {
+    return `Ligação atendimento preferencial Cresce Mais - ${contactName || data.attendeeName || 'Cliente'}`;
+  }
+
   const leadType = LEAD_TYPE_LABELS[normalizeLeadType(data.leadType)];
   const name = contactName || data.attendeeName || 'Cliente';
   return isPhoneCallSchedule(data) ? `Ligação consulta ${leadType} - ${name}` : data.title || `Consulta ${leadType}`;
@@ -590,8 +830,8 @@ function buildCalendarDescription({ contactName, data = {}, jid, leadType, notes
     data.contactPhone ? `Telefone: ${data.contactPhone}` : null,
     data.attendeeEmail ? `Email: ${data.attendeeEmail}` : null,
     `WhatsApp JID: ${jid}`,
-    `Tipo de atendimento: ${LEAD_TYPE_LABELS[normalizeLeadType(leadType)]}`,
-    notes ? `Observacoes: ${notes}` : null,
+    `Tipo de atendimento: ${data.segment === 'agro' || data.preferredService === 'agro' ? 'atendimento preferencial Cresce Mais - agro' : LEAD_TYPE_LABELS[normalizeLeadType(leadType)]}`,
+    notes ? `Observações: ${notes}` : null,
   ]
     .filter(Boolean)
     .join('\n');
@@ -988,7 +1228,8 @@ export class WhatsAppClient extends EventEmitter {
       return null;
     }
 
-    const schedulingReply = await this.createSchedulingReply({ contactName, isGroup, jid, text });
+    const history = buildConversationHistory(this.store?.getConversation?.(jid));
+    const schedulingReply = await this.createSchedulingReply({ contactName, history, isGroup, jid, text });
     if (schedulingReply) {
       return schedulingReply;
     }
@@ -1003,7 +1244,7 @@ export class WhatsAppClient extends EventEmitter {
     }
 
     try {
-      const response = await this.gemini.generateReply({ text, contactName });
+      const response = await this.gemini.generateReply({ text, contactName, history });
       return {
         ...fallbackReply,
         name: 'IA',
@@ -1017,13 +1258,14 @@ export class WhatsAppClient extends EventEmitter {
 
   async createMissingDetailsReply({ data, jid, missing }) {
     let nextData = data;
-    let response = buildMissingScheduleMessage(missing);
+    const isPreferredAgro = data?.segment === 'agro' || data?.preferredService === 'agro';
+    let response = isPreferredAgro ? buildPreferredMissingScheduleMessage(missing) : buildMissingScheduleMessage(missing);
 
     if (missing.includes('data e horário') && this.calendar?.isReady) {
       try {
         const availableSlots = await this.calendar.listAvailableSlots({
           durationMinutes: data.durationMinutes || DEFAULT_MEETING_DURATION_MINUTES,
-          leadType: data.leadType,
+          leadType: data.calendarLeadType || data.leadType,
         });
 
         if (availableSlots.length) {
@@ -1031,7 +1273,7 @@ export class WhatsAppClient extends EventEmitter {
             ...data,
             availableSlots,
           };
-          response = buildAvailableSlotsMessage(availableSlots, missing);
+          response = isPreferredAgro ? buildPreferredAvailableSlotsMessage(availableSlots, missing) : buildAvailableSlotsMessage(availableSlots, missing);
         } else {
           response =
             'Não encontrei horários livres nos próximos dias. Me envie uma sugestão de data e horário para eu verificar.';
@@ -1054,7 +1296,112 @@ export class WhatsAppClient extends EventEmitter {
     };
   }
 
-  async createSchedulingReply({ contactName, isGroup, jid, text }) {
+  async createAlternativeSlotsReply({ current, jid }) {
+    const data = {
+      ...(current?.data || {}),
+      startDateTime: null,
+    };
+    const missing = getScheduleMissing(data);
+    const isPreferredAgro = data?.segment === 'agro' || data?.preferredService === 'agro';
+    let nextData = {
+      ...data,
+      availableSlots: [],
+    };
+    let response = isPreferredAgro
+      ? buildPreferredMissingScheduleMessage(missing)
+      : 'Claro. Me envie outro dia e horário de preferência para eu verificar.';
+
+    if (this.calendar?.isReady) {
+      try {
+        const availableSlots = await this.calendar.listAvailableSlots({
+          durationMinutes: data.durationMinutes || DEFAULT_MEETING_DURATION_MINUTES,
+          leadType: data.calendarLeadType || data.leadType,
+          now: getLaterSlotsSearchDate(data.availableSlots),
+        });
+
+        nextData = {
+          ...data,
+          availableSlots,
+        };
+
+        if (availableSlots.length) {
+          response = isPreferredAgro
+            ? buildPreferredAvailableSlotsMessage(availableSlots, missing, { heading: 'Tenho estes horários em outros dias' })
+            : buildAvailableSlotsMessage(availableSlots, missing, { heading: 'Tenho estes horários em outros dias' });
+        } else {
+          response = 'Não encontrei outros horários livres nos próximos dias. Me envie uma sugestão de dia e horário para eu verificar.';
+        }
+      } catch (error) {
+        this.emitActivity('error', 'Falha ao buscar horários em outros dias.', { error: error.message, jid });
+      }
+    }
+
+    this.scheduling.set(jid, {
+      data: nextData,
+      status: 'awaiting_details',
+      updatedAt: new Date().toISOString(),
+    });
+
+    return {
+      ...this.defaultReply,
+      name: 'Agenda',
+      response,
+    };
+  }
+
+  createStateFallbackReply({ current, prefix = 'Não entendi certinho.' } = {}) {
+    const response = buildStateFallbackMessage(current);
+    if (!response) {
+      return null;
+    }
+
+    return {
+      ...this.defaultReply,
+      name: 'Assistente',
+      response: prefix ? `${prefix}\n\n${response}` : response,
+    };
+  }
+
+  async createPaymentAcceptedReply({ contactName, current, jid, next = {}, text }) {
+    const data = normalizeSchedulePhone(mergeScheduleData(current.data, { ...next, analysisAccepted: true }), { jid, text });
+    const leadType = normalizeLeadType(data.leadType);
+
+    await this.recordLeadStatus({
+      contactName,
+      jid,
+      leadType,
+      reason: `Cliente aceitou a consulta de ${LEAD_TYPE_LABELS[leadType]}.`,
+      status: leadType,
+    });
+
+    if (!this.calendar?.isReady) {
+      return {
+        ...this.defaultReply,
+        name: 'Agenda',
+        response:
+          'A consulta foi confirmada, mas o Google Agenda ainda não está configurado no sistema. Vou encaminhar para um atendente finalizar.',
+      };
+    }
+
+    const missing = getScheduleMissing(data);
+    if (missing.length) {
+      return this.createMissingDetailsReply({ data, jid, missing });
+    }
+
+    this.scheduling.set(jid, {
+      data,
+      status: 'awaiting_confirmation',
+      updatedAt: new Date().toISOString(),
+    });
+
+    return {
+      ...this.defaultReply,
+      name: 'Agenda',
+      response: buildConfirmationMessage(data),
+    };
+  }
+
+  async createSchedulingReply({ contactName, history = null, isGroup, jid, text }) {
     if (isGroup) {
       return null;
     }
@@ -1068,6 +1415,105 @@ export class WhatsAppClient extends EventEmitter {
       const data = {};
       this.scheduling.set(jid, {
         data,
+        status: 'awaiting_segment',
+        updatedAt: new Date().toISOString(),
+      });
+
+      return {
+        ...this.defaultReply,
+        name: 'Qualificação',
+        response: buildSegmentMessage(),
+      };
+    }
+
+    if (!current && menuOption) {
+      current = {
+        data: {},
+        status: 'awaiting_segment',
+        updatedAt: new Date().toISOString(),
+      };
+    }
+
+    if (!current && isAgroSegmentText(text)) {
+      const data = normalizeSchedulePhone(buildPreferredAgroData({}, phoneCallPreference), { jid, text });
+      return this.createMissingDetailsReply({ data, jid, missing: getScheduleMissing(data) });
+    }
+
+    if (current?.status === 'awaiting_segment') {
+      if (menuOption === 1 || isAgroSegmentText(text)) {
+        const data = normalizeSchedulePhone(buildPreferredAgroData(current.data, phoneCallPreference), { jid, text });
+        const missing = getScheduleMissing(data);
+
+        if (missing.length) {
+          return this.createMissingDetailsReply({ data, jid, missing });
+        }
+
+        this.scheduling.set(jid, {
+          data,
+          status: 'awaiting_confirmation',
+          updatedAt: new Date().toISOString(),
+        });
+
+        return {
+          ...this.defaultReply,
+          name: 'Agenda',
+          response: buildConfirmationMessage(data),
+        };
+      }
+
+      const inferredLeadType = inferLeadTypeFromProblemText(text);
+      if (inferredLeadType || isUnsureAboutProblem(text)) {
+        const leadType = inferredLeadType || 'low_ticket';
+        const data = mergeScheduleData(current.data, {
+          analysisAccepted: false,
+          leadConfidence: inferredLeadType ? 0.85 : 0.7,
+          leadType,
+          notes: inferredLeadType
+            ? 'Cliente informou o problema antes de responder o segmento.'
+            : 'Cliente não sabe exatamente qual é o problema; iniciar pela consulta de negativado.',
+          paymentAmount: ANALYSIS_FEES[leadType],
+          segment: 'unknown',
+        });
+
+        this.scheduling.set(jid, {
+          data,
+          status: 'awaiting_payment_confirmation',
+          updatedAt: new Date().toISOString(),
+        });
+
+        return {
+          ...this.defaultReply,
+          name: 'Qualificação',
+          response: inferredLeadType ? buildAnalysisOfferMessage(data) : buildUnknownProblemOfferMessage(),
+        };
+      }
+
+      if ((menuOption && menuOption >= 2 && menuOption <= 5) || isNonAgroSegmentText(text)) {
+        const data = {
+          ...current.data,
+          segment: menuOption === 4 ? 'person' : menuOption === 2 ? 'commerce_services' : menuOption === 3 ? 'industry' : 'other',
+        };
+
+        this.scheduling.set(jid, {
+          data,
+          status: 'awaiting_qualification',
+          updatedAt: new Date().toISOString(),
+        });
+
+        return {
+          ...this.defaultReply,
+          name: 'Qualificação',
+          response: buildQualificationMessage(data),
+        };
+      }
+
+      const data = {
+        ...current.data,
+        segment: 'other',
+      };
+
+      this.scheduling.set(jid, {
+        data,
         status: 'awaiting_qualification',
         updatedAt: new Date().toISOString(),
       });
@@ -1076,14 +1522,6 @@ export class WhatsAppClient extends EventEmitter {
         ...this.defaultReply,
         name: 'Qualificação',
         response: buildQualificationMessage(data),
-      };
-    }
-
-    if (!current && menuOption) {
-      current = {
-        data: {},
-        status: 'awaiting_qualification',
-        updatedAt: new Date().toISOString(),
       };
     }
 
@@ -1112,6 +1550,10 @@ export class WhatsAppClient extends EventEmitter {
         !missingBefore.includes('data e horário') && missingBefore.includes('email ou confirmação de ligação por telefone');
       const selectedSlot = findSelectedAvailableSlot(text, current.data?.availableSlots);
       let detailsChanged = false;
+
+      if (isChangeScheduleRequest(text)) {
+        return this.createAlternativeSlotsReply({ current, jid });
+      }
 
       if (waitingForContactChoice && menuOption === 1) {
         return {
@@ -1194,6 +1636,31 @@ export class WhatsAppClient extends EventEmitter {
 
     if (!current && isAppointmentCancellation(text)) {
       return this.cancelScheduledMeeting({ contactName, jid });
+    }
+
+    if (current?.status === 'awaiting_qualification' && !menuOption) {
+      const inferredLeadType = inferLeadTypeFromProblemText(text);
+      if (inferredLeadType) {
+        const data = mergeScheduleData(current.data, {
+          analysisAccepted: false,
+          leadConfidence: 0.85,
+          leadType: inferredLeadType,
+          notes: 'Cliente informou o problema em texto livre.',
+          paymentAmount: ANALYSIS_FEES[inferredLeadType],
+        });
+
+        this.scheduling.set(jid, {
+          data,
+          status: 'awaiting_payment_confirmation',
+          updatedAt: new Date().toISOString(),
+        });
+
+        return {
+          ...this.defaultReply,
+          name: 'Qualificação',
+          response: buildAnalysisOfferMessage(data),
+        };
+      }
     }
 
     if (current?.status === 'awaiting_qualification' && menuOption) {
@@ -1289,11 +1756,7 @@ export class WhatsAppClient extends EventEmitter {
 
       if (menuOption === 2 || isChangeScheduleRequest(text)) {
         const { availableSlots, startDateTime, ...dataWithoutTime } = current.data;
-        return this.createMissingDetailsReply({
-          data: dataWithoutTime,
-          jid,
-          missing: getScheduleMissing(dataWithoutTime),
-        });
+        return this.createAlternativeSlotsReply({ current: { ...current, data: { ...dataWithoutTime, availableSlots } }, jid });
       }
 
       if (menuOption === 3 || isCancellation(text)) {
@@ -1331,66 +1794,47 @@ export class WhatsAppClient extends EventEmitter {
         };
       }
 
-      if (menuOption === 1 || isConfirmation(text)) {
-        const data = normalizeSchedulePhone(mergeScheduleData(current.data, { analysisAccepted: true }), { jid, text });
-        const leadType = normalizeLeadType(data.leadType);
-
-        await this.recordLeadStatus({
-          contactName,
-          jid,
-          leadType,
-          reason: `Cliente aceitou a consulta de ${LEAD_TYPE_LABELS[leadType]}.`,
-          status: leadType,
-        });
-
-        if (!this.calendar?.isReady) {
-          return {
-            ...this.defaultReply,
-            name: 'Agenda',
-            response:
-              'A consulta foi confirmada, mas o Google Agenda ainda não está configurado no sistema. Vou encaminhar para um atendente finalizar.',
-          };
-        }
-
-        const missing = getScheduleMissing(data);
-        if (missing.length) {
-          return this.createMissingDetailsReply({ data, jid, missing });
-        }
-
-        this.scheduling.set(jid, {
-          data,
-          status: 'awaiting_confirmation',
-          updatedAt: new Date().toISOString(),
-        });
-
-        return {
-          ...this.defaultReply,
-          name: 'Agenda',
-          response: buildConfirmationMessage(data),
-        };
+      if (menuOption === 1 || isPaymentAcceptance(text)) {
+        return this.createPaymentAcceptedReply({ contactName, current, jid, text });
       }
     }
 
     if (!this.gemini?.isReady) {
-      return null;
+      return current ? this.createStateFallbackReply({ current }) : null;
     }
 
     let analysis;
     try {
       analysis = await this.gemini.analyzeScheduling({
         contactName,
-        existing: current?.data || {},
+        existing: buildAnalysisExistingContext(current),
+        history: history || buildConversationHistory(this.store?.getConversation?.(jid)),
         nowIso: new Date().toISOString(),
         text,
         timeZone: GOOGLE_CALENDAR_TIME_ZONE,
       });
     } catch (error) {
       this.emitActivity('error', 'IA não conseguiu analisar agenda.', { error: error.message });
-      return null;
+      return current ? this.createStateFallbackReply({ current }) : null;
     }
 
     if (analysis.intent === 'cancel' && current) {
       this.scheduling.delete(jid);
+      if (['awaiting_segment', 'awaiting_qualification', 'awaiting_payment_confirmation'].includes(current.status)) {
+        await this.recordLeadStatus({
+          contactName,
+          jid,
+          reason: current.data?.notes || text,
+          status: 'discarded',
+        });
+
+        return {
+          ...this.defaultReply,
+          name: 'Qualificação',
+          response: buildPaymentRefusalMessage(),
+        };
+      }
+
       return {
         ...this.defaultReply,
         name: 'Agenda',
@@ -1404,6 +1848,14 @@ export class WhatsAppClient extends EventEmitter {
 
     if (analysis.intent === 'confirm' && current?.status === 'awaiting_confirmation') {
       return this.confirmScheduledMeeting({ contactName, jid });
+    }
+
+    if (analysis.intent === 'confirm' && current?.status === 'awaiting_payment_confirmation') {
+      return this.createPaymentAcceptedReply({ contactName, current, jid, next: analysis, text });
+    }
+
+    if (current && analysis.intent === 'other' && Number(analysis.confidence || 0) < 0.55) {
+      return this.createStateFallbackReply({ current });
     }
 
     const shouldSchedule =
@@ -1626,7 +2078,7 @@ export class WhatsAppClient extends EventEmitter {
           notes: data.notes,
         }),
         durationMinutes: data.durationMinutes || DEFAULT_MEETING_DURATION_MINUTES,
-        leadType: data.leadType,
+        leadType: data.calendarLeadType || data.leadType,
         startDateTime: data.startDateTime,
         title: buildCalendarTitle(data, contactName),
       });
@@ -1637,7 +2089,7 @@ export class WhatsAppClient extends EventEmitter {
         contactName,
         eventId: event.eventId,
         jid,
-        leadType: data.leadType,
+        leadType: data.calendarLeadType || data.leadType,
         meetingAt: event.startDateTime,
         status: 'meeting_created',
       });
@@ -1653,7 +2105,7 @@ export class WhatsAppClient extends EventEmitter {
         contactName,
         eventId: event.eventId,
         jid,
-        leadType: data.leadType,
+        leadType: data.calendarLeadType || data.leadType,
         meetLink: event.meetLink,
         startDateTime: event.startDateTime,
         title: event.title,
@@ -1664,6 +2116,14 @@ export class WhatsAppClient extends EventEmitter {
       const calendarLine = event.calendarLink ? `\nConvite: ${event.calendarLink}` : '';
 
       if (phoneCall) {
+        if (data.segment === 'agro' || data.preferredService === 'agro') {
+          return {
+            ...this.defaultReply,
+            name: 'Google Agenda',
+            response: `Ligação de atendimento preferencial Cresce Mais marcada para ${meetingDate}. O especialista responsável vai chamar pelo telefone/WhatsApp ${data.contactPhone}.`,
+          };
+        }
+
         return {
           ...this.defaultReply,
           name: 'Google Agenda',
