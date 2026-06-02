@@ -2444,7 +2444,6 @@ export class WhatsAppClient extends EventEmitter {
     });
 
     try {
-      await this.clearSchedulingState(jid);
       await this.recordLeadStatus({
         appointmentId: savedAppointment?.id,
         appointmentSaved: Boolean(savedAppointment),
@@ -2464,6 +2463,16 @@ export class WhatsAppClient extends EventEmitter {
       this.emitActivity('error', 'Reuniao criada no Google Agenda, mas falhou ao atualizar a pipeline.', {
         error: error.message,
         calendarId: event.calendarId,
+        eventId: event.eventId,
+        jid,
+      });
+    }
+
+    try {
+      await this.clearSchedulingState(jid);
+    } catch (error) {
+      this.emitActivity('error', 'Reuniao criada, mas falhou ao limpar o estado de agendamento.', {
+        error: error.message,
         eventId: event.eventId,
         jid,
       });
@@ -2506,24 +2515,38 @@ export class WhatsAppClient extends EventEmitter {
     };
   }
 
-  async saveAppointment(appointment) {
+  async saveAppointment(appointment, { attempts = 3 } = {}) {
     if (!this.appointmentStore?.isConfigured) {
-      this.emitActivity('followup', 'Agenda interna não configurada. Agendamento não foi salvo no sistema.', {
+      this.emitActivity('error', 'Agenda interna não configurada. Agendamento não foi salvo no sistema.', {
         eventId: appointment.eventId,
       });
       return null;
     }
 
-    try {
-      const saved = await this.appointmentStore.saveAppointment(appointment);
-      this.emitActivity('followup', 'Agendamento salvo para follow-up.', {
-        appointmentId: saved?.id,
-      });
-      return saved;
-    } catch (error) {
-      this.emitActivity('error', 'Falha ao salvar agendamento para follow-up.', { error: error.message });
-      return null;
+    let lastError = null;
+    const totalAttempts = Math.max(1, Number(attempts) || 1);
+
+    for (let attempt = 1; attempt <= totalAttempts; attempt += 1) {
+      try {
+        const saved = await this.appointmentStore.saveAppointment(appointment);
+        this.emitActivity('calendar', 'Agendamento salvo na agenda interna.', {
+          appointmentId: saved?.id,
+          eventId: appointment.eventId,
+        });
+        return saved;
+      } catch (error) {
+        lastError = error;
+        if (attempt < totalAttempts) {
+          await sleep(350 * attempt);
+        }
+      }
     }
+
+    this.emitActivity('error', 'Falha ao salvar agendamento na agenda interna.', {
+      error: lastError?.message,
+      eventId: appointment.eventId,
+    });
+    return null;
   }
 
   async replyWithAutomation(jid, quotedMessage, automation, contactName) {

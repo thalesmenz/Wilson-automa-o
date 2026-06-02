@@ -114,6 +114,55 @@ function escapeHtml(value) {
     .replace(/'/g, '&#39;');
 }
 
+function toDateMs(value) {
+  const date = new Date(value || 0);
+  const time = date.getTime();
+  return Number.isNaN(time) ? 0 : time;
+}
+
+function getPipelineAppointmentFallbacks(appointments, { from, status, to } = {}) {
+  const existingEventIds = new Set(appointments.map((appointment) => appointment.eventId).filter(Boolean));
+  const fromMs = from ? toDateMs(from) : 0;
+  const toMs = to ? toDateMs(to) : 0;
+
+  return Object.values(store.getConversations())
+    .map((conversation) => {
+      const lead = conversation.lead || {};
+      const appointmentStatus = lead.status === 'cancelled' ? 'cancelled' : lead.status === 'meeting_created' ? 'scheduled' : null;
+
+      if (!appointmentStatus || !lead.eventId || !lead.meetingAt || existingEventIds.has(lead.eventId)) {
+        return null;
+      }
+
+      if (status && status !== 'all' && status !== appointmentStatus) {
+        return null;
+      }
+
+      const meetingTime = toDateMs(lead.meetingAt);
+      if ((fromMs && meetingTime < fromMs) || (toMs && meetingTime > toMs)) {
+        return null;
+      }
+
+      return {
+        attendeeEmail: null,
+        calendarId: lead.calendarId || null,
+        calendarLink: lead.calendarLink || null,
+        contactName: conversation.contactName || conversation.jid,
+        eventId: lead.eventId,
+        id: `pipeline-${conversation.jid}-${lead.eventId}`,
+        jid: conversation.jid,
+        leadType: lead.leadType || 'unknown',
+        meetLink: lead.meetLink || null,
+        source: 'pipeline',
+        startDateTime: lead.meetingAt,
+        status: appointmentStatus,
+        title: appointmentStatus === 'cancelled' ? 'Reuniao cancelada' : 'Reuniao marcada',
+        updatedAt: lead.updatedAt || conversation.updatedAt,
+      };
+    })
+    .filter(Boolean);
+}
+
 function broadcastAutomations() {
   io.emit('automations', store.getAutomations());
 }
@@ -334,15 +383,22 @@ app.get('/api/events', (req, res) => {
 app.get('/api/appointments', async (req, res) => {
   try {
     const defaultFrom = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const from = req.query?.from || defaultFrom;
+    const status = req.query?.status;
+    const to = req.query?.to;
     const appointments = await appointmentStore.listAppointments({
       excludeDemo: req.query?.includeDemo !== 'true',
-      from: req.query?.from || defaultFrom,
+      from,
       limit: req.query?.limit || 500,
-      status: req.query?.status,
-      to: req.query?.to,
+      status,
+      to,
     });
+    const fallbackAppointments = getPipelineAppointmentFallbacks(appointments, { from, status, to });
+    const allAppointments = [...appointments, ...fallbackAppointments].sort(
+      (a, b) => toDateMs(a.startDateTime) - toDateMs(b.startDateTime),
+    );
 
-    res.json({ appointments, status: appointmentStore.getStatus() });
+    res.json({ appointments: allAppointments, status: appointmentStore.getStatus() });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

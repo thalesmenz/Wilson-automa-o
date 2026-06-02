@@ -697,7 +697,7 @@ export default function App() {
 
                   <div className="agenda-route">
                     <Tag type={getAppointmentStatusTag(item.status)}>{getAppointmentStatusLabel(item.status)}</Tag>
-                    <small>{getAppointmentRoute(item)}</small>
+                    <small>{item.source === 'pipeline' ? `${getAppointmentRoute(item)} - Pipeline` : getAppointmentRoute(item)}</small>
                   </div>
 
                   <div className="agenda-actions">
