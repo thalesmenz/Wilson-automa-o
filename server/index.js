@@ -331,6 +331,22 @@ app.get('/api/events', (req, res) => {
   );
 });
 
+app.get('/api/appointments', async (req, res) => {
+  try {
+    const defaultFrom = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const appointments = await appointmentStore.listAppointments({
+      from: req.query?.from || defaultFrom,
+      limit: req.query?.limit || 500,
+      status: req.query?.status,
+      to: req.query?.to,
+    });
+
+    res.json({ appointments, status: appointmentStore.getStatus() });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.get('/api/followups', async (_req, res) => {
   try {
     const upcoming = await appointmentStore.listUpcomingAppointments();

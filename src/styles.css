@@ -411,6 +411,7 @@ button:disabled {
 
 .client-list,
 .connection-list,
+.agenda-list,
 .follow-list,
 .activity-list {
   display: grid;
@@ -750,6 +751,114 @@ button:disabled {
   background: #9aa7ad;
 }
 
+.agenda-page {
+  display: grid;
+  gap: 18px;
+}
+
+.agenda-list {
+  gap: 9px;
+}
+
+.agenda-row {
+  align-items: center;
+  border-top: 1px solid #edf1f3;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 118px minmax(0, 1fr) 118px minmax(124px, auto);
+  min-height: 72px;
+  padding: 10px 0;
+}
+
+.agenda-row:first-child {
+  border-top: 0;
+}
+
+.agenda-row.cancelled {
+  opacity: 0.72;
+}
+
+.agenda-time,
+.agenda-main,
+.agenda-route {
+  min-width: 0;
+}
+
+.agenda-time strong,
+.agenda-time span,
+.agenda-main strong,
+.agenda-main span,
+.agenda-main small,
+.agenda-route small {
+  display: block;
+}
+
+.agenda-time strong {
+  font-size: 20px;
+  line-height: 1;
+}
+
+.agenda-time span,
+.agenda-main small,
+.agenda-route small,
+.agenda-empty-link {
+  color: #72808a;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.agenda-main strong,
+.agenda-main span,
+.agenda-main small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agenda-main span {
+  color: #3e4d46;
+  font-size: 14px;
+  font-weight: 850;
+  margin-top: 2px;
+}
+
+.agenda-route {
+  display: grid;
+  gap: 6px;
+  justify-items: start;
+}
+
+.agenda-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  justify-content: flex-end;
+}
+
+.link-button {
+  align-items: center;
+  border: 1px solid #d5dee3;
+  border-radius: 8px;
+  color: #126e5c;
+  display: inline-flex;
+  font-size: 13px;
+  font-weight: 900;
+  gap: 7px;
+  min-height: 34px;
+  padding: 0 10px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.link-button:hover {
+  border-color: #14856c;
+  box-shadow: 0 10px 22px rgba(23, 33, 29, 0.08);
+}
+
+.agenda-empty-link {
+  align-self: center;
+}
+
 .icon-button {
   border-radius: 8px;
   flex: 0 0 auto;
@@ -1047,9 +1156,14 @@ button:disabled {
     max-width: 100%;
   }
 
+  .agenda-row,
   .follow-row {
     align-items: start;
     grid-template-columns: 1fr;
     padding: 10px 0;
+  }
+
+  .agenda-actions {
+    justify-content: flex-start;
   }
 }

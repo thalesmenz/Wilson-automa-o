@@ -2282,7 +2282,7 @@ export class WhatsAppClient extends EventEmitter {
   }
 
   async cancelScheduledMeeting({ contactName, jid }) {
-    if (!this.appointmentStore?.isReady || !this.appointmentStore.findNextScheduledAppointmentByJid) {
+    if (!this.appointmentStore?.isConfigured || !this.appointmentStore.findNextScheduledAppointmentByJid) {
       return {
         ...this.defaultReply,
         name: 'Agenda',
@@ -2507,8 +2507,8 @@ export class WhatsAppClient extends EventEmitter {
   }
 
   async saveAppointment(appointment) {
-    if (!this.appointmentStore?.isReady) {
-      this.emitActivity('followup', 'Banco de follow-ups não configurado. Follow-ups não foram salvos.', {
+    if (!this.appointmentStore?.isConfigured) {
+      this.emitActivity('followup', 'Agenda interna não configurada. Agendamento não foi salvo no sistema.', {
         eventId: appointment.eventId,
       });
       return null;

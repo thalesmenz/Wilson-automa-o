@@ -4,6 +4,19 @@ function addHours(date, hours) {
   return new Date(date.getTime() + Number(hours || 0) * 60 * 60 * 1000);
 }
 
+function toIsoDateFilter(value) {
+  if (!value) {
+    return null;
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  return date.toISOString();
+}
+
 function getLocalDateKey(date, timeZone) {
   return new Intl.DateTimeFormat('en-CA', {
     day: '2-digit',
@@ -53,6 +66,7 @@ function fromAppointmentRow(row) {
     calendarId: row.calendar_id,
     calendarLink: row.calendar_link,
     contactName: row.contact_name,
+    createdAt: row.created_at,
     dayReminderSentAt: row.day_reminder_sent_at,
     eventId: row.event_id,
     id: row.id,
@@ -63,6 +77,7 @@ function fromAppointmentRow(row) {
     status: row.status,
     thirtyMinReminderSentAt: row.thirty_min_reminder_sent_at,
     title: row.title,
+    updatedAt: row.updated_at,
   };
 }
 
@@ -87,10 +102,14 @@ export class AppointmentStore {
     return Boolean(this.enabled && this.supabase?.isReady);
   }
 
+  get isConfigured() {
+    return Boolean(this.supabase?.isReady);
+  }
+
   getStatus() {
     return {
       active: this.enabled,
-      configured: Boolean(this.supabase?.isReady),
+      configured: this.isConfigured,
       enabled: this.isReady,
       provider: 'Supabase',
       table: this.table,
@@ -107,7 +126,7 @@ export class AppointmentStore {
   }
 
   async saveAppointment(appointment) {
-    if (!this.isReady) {
+    if (!this.isConfigured) {
       return null;
     }
 
@@ -122,6 +141,42 @@ export class AppointmentStore {
     }
 
     return fromAppointmentRow(data);
+  }
+
+  async listAppointments({ from, limit = 250, status, to } = {}) {
+    if (!this.isConfigured) {
+      return [];
+    }
+
+    const safeLimit = Math.min(Math.max(Number(limit) || 250, 1), 500);
+    let query = this.getClient()
+      .from(this.table)
+      .select('*')
+      .order('start_datetime', { ascending: true })
+      .limit(safeLimit);
+
+    if (status && status !== 'all') {
+      query = query.eq('status', status);
+    }
+
+    const fromIso = toIsoDateFilter(from);
+    const toIso = toIsoDateFilter(to);
+
+    if (fromIso) {
+      query = query.gte('start_datetime', fromIso);
+    }
+
+    if (toIso) {
+      query = query.lte('start_datetime', toIso);
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      throw error;
+    }
+
+    return data.map(fromAppointmentRow);
   }
 
   async listUpcomingAppointments(now = new Date()) {
@@ -174,7 +229,7 @@ export class AppointmentStore {
   }
 
   async findNextScheduledAppointmentByJid(jid, now = new Date()) {
-    if (!this.isReady || !jid) {
+    if (!this.isConfigured || !jid) {
       return null;
     }
 
@@ -195,7 +250,7 @@ export class AppointmentStore {
   }
 
   async markCancelled(id, cancelledAt = new Date()) {
-    if (!this.isReady || !id) {
+    if (!this.isConfigured || !id) {
       return null;
     }
 

@@ -46,6 +46,10 @@ const VIEWS = {
     eyebrow: 'Sistema',
     title: 'Conexoes',
   },
+  appointments: {
+    eyebrow: 'Agenda',
+    title: 'Agenda interna',
+  },
   followups: {
     eyebrow: 'Agenda',
     title: 'Follow-ups',
@@ -114,6 +118,16 @@ function formatDateTime(value) {
   return new Intl.DateTimeFormat('pt-BR', {
     dateStyle: 'short',
     timeStyle: 'short',
+  }).format(new Date(value));
+}
+
+function formatDate(value) {
+  if (!value) {
+    return '';
+  }
+
+  return new Intl.DateTimeFormat('pt-BR', {
+    dateStyle: 'medium',
   }).format(new Date(value));
 }
 
@@ -208,10 +222,47 @@ function getLeadTag(lead) {
   return 'neutral';
 }
 
+function getAppointmentRoute(appointment) {
+  if (appointment.leadType === 'high_ticket') {
+    return 'Wilson';
+  }
+
+  if (appointment.leadType === 'low_ticket') {
+    return 'Andre';
+  }
+
+  return 'Agenda';
+}
+
+function getAppointmentStatusLabel(status) {
+  if (status === 'cancelled') {
+    return 'Cancelado';
+  }
+
+  if (status === 'done') {
+    return 'Concluido';
+  }
+
+  return 'Marcado';
+}
+
+function getAppointmentStatusTag(status) {
+  if (status === 'cancelled') {
+    return 'discarded';
+  }
+
+  if (status === 'done') {
+    return 'neutral';
+  }
+
+  return 'meeting';
+}
+
 export default function App() {
   const [activeView, setActiveView] = useState('overview');
   const [status, setStatus] = useState({ status: 'idle' });
   const [activity, setActivity] = useState([]);
+  const [appointments, setAppointments] = useState([]);
   const [conversations, setConversations] = useState({});
   const [followups, setFollowups] = useState({ recent: [], upcoming: [] });
   const [leads, setLeads] = useState([]);
@@ -251,17 +302,19 @@ export default function App() {
   }, [activity]);
 
   async function refreshDashboard() {
-    const [summaryPayload, leadsPayload, followupsPayload, conversationsPayload] = await Promise.all([
+    const [summaryPayload, leadsPayload, followupsPayload, conversationsPayload, appointmentsPayload] = await Promise.all([
       request('/api/dashboard/summary'),
       request('/api/leads'),
       request('/api/followups'),
       request('/api/conversations'),
+      request('/api/appointments').catch(() => ({ appointments: [] })),
     ]);
 
     setSummary({ ...EMPTY_SUMMARY, ...(summaryPayload || {}) });
     setLeads(Array.isArray(leadsPayload) ? leadsPayload : []);
     setFollowups(followupsPayload || { recent: [], upcoming: [] });
     setConversations(conversationsPayload && typeof conversationsPayload === 'object' ? conversationsPayload : {});
+    setAppointments(Array.isArray(appointmentsPayload?.appointments) ? appointmentsPayload.appointments : []);
   }
 
   useEffect(() => {
@@ -615,6 +668,64 @@ export default function App() {
     );
   }
 
+  function renderAppointments() {
+    return (
+      <section className="agenda-page">
+        <article className="panel agenda-panel">
+          <div className="panel-header">
+            <div>
+              <span className="eyebrow">Sistema</span>
+              <h2>Reunioes registradas</h2>
+            </div>
+            <Tag type="neutral">{appointments.length} registros</Tag>
+          </div>
+
+          <div className="agenda-list">
+            {appointments.length ? (
+              appointments.map((item) => (
+                <div className={`agenda-row ${item.status || 'scheduled'}`} key={item.id || item.eventId}>
+                  <div className="agenda-time">
+                    <strong>{formatTime(item.startDateTime)}</strong>
+                    <span>{formatDate(item.startDateTime)}</span>
+                  </div>
+
+                  <div className="agenda-main">
+                    <strong>{item.contactName || item.attendeeEmail || item.jid || 'Cliente'}</strong>
+                    <span>{item.title || 'Reuniao marcada'}</span>
+                    <small>{item.attendeeEmail || item.jid || 'Sem contato salvo'}</small>
+                  </div>
+
+                  <div className="agenda-route">
+                    <Tag type={getAppointmentStatusTag(item.status)}>{getAppointmentStatusLabel(item.status)}</Tag>
+                    <small>{getAppointmentRoute(item)}</small>
+                  </div>
+
+                  <div className="agenda-actions">
+                    {item.calendarLink ? (
+                      <a className="link-button" href={item.calendarLink} target="_blank" rel="noreferrer">
+                        <CalendarCheck size={16} />
+                        Agenda
+                      </a>
+                    ) : null}
+                    {item.meetLink ? (
+                      <a className="link-button" href={item.meetLink} target="_blank" rel="noreferrer">
+                        <ArrowUpRight size={16} />
+                        Meet
+                      </a>
+                    ) : null}
+                    {!item.calendarLink && !item.meetLink ? <small className="agenda-empty-link">Sem link</small> : null}
+                  </div>
+                </div>
+              ))
+            ) : (
+              <p className="empty-state">Nenhuma reuniao registrada na agenda interna.</p>
+            )}
+          </div>
+        </article>
+      </section>
+    );
+  }
+
   function renderFollowups() {
     return (
       <section className="follow-page">
@@ -696,6 +807,10 @@ export default function App() {
             <Wifi size={18} />
             Conexoes
           </button>
+          <button type="button" className={activeView === 'appointments' ? 'active' : ''} onClick={() => setActiveView('appointments')}>
+            <CalendarCheck size={18} />
+            Agenda
+          </button>
           <button type="button" className={activeView === 'followups' ? 'active' : ''} onClick={() => setActiveView('followups')}>
             <Clock3 size={18} />
             Follow-ups
@@ -733,6 +848,7 @@ export default function App() {
         {activeView === 'overview' ? renderOverview() : null}
         {activeView === 'clients' ? renderClients() : null}
         {activeView === 'connections' ? renderConnections() : null}
+        {activeView === 'appointments' ? renderAppointments() : null}
         {activeView === 'followups' ? renderFollowups() : null}
       </section>
 
