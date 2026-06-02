@@ -5,7 +5,10 @@ import {
   ArrowUpRight,
   Bot,
   CalendarCheck,
+  CalendarDays,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   Clock3,
   MessageCircle,
   PieChart,
@@ -129,6 +132,82 @@ function formatDate(value) {
   return new Intl.DateTimeFormat('pt-BR', {
     dateStyle: 'medium',
   }).format(new Date(value));
+}
+
+function formatCompactDate(value) {
+  if (!value) {
+    return '';
+  }
+
+  return new Intl.DateTimeFormat('pt-BR', {
+    day: '2-digit',
+    month: 'short',
+  }).format(new Date(value));
+}
+
+function startOfDay(value) {
+  const date = new Date(value);
+  date.setHours(0, 0, 0, 0);
+  return date;
+}
+
+function addDays(value, amount) {
+  const date = new Date(value);
+  date.setDate(date.getDate() + amount);
+  return date;
+}
+
+function startOfWeek(value) {
+  const date = startOfDay(value);
+  const weekday = date.getDay();
+  const offset = weekday === 0 ? -6 : 1 - weekday;
+  return addDays(date, offset);
+}
+
+function getWeekDays(value) {
+  const firstDay = startOfWeek(value);
+  return Array.from({ length: 7 }, (_, index) => addDays(firstDay, index));
+}
+
+function getDateKey(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return 'invalid';
+  }
+
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function isSameDay(a, b) {
+  return getDateKey(a) === getDateKey(b);
+}
+
+function formatWeekday(value) {
+  return new Intl.DateTimeFormat('pt-BR', {
+    weekday: 'short',
+  })
+    .format(new Date(value))
+    .replace('.', '');
+}
+
+function formatAgendaRange(days) {
+  if (!days.length) {
+    return '';
+  }
+
+  const first = days[0];
+  const last = days[days.length - 1];
+  const sameMonth = first.getMonth() === last.getMonth() && first.getFullYear() === last.getFullYear();
+  const firstLabel = sameMonth
+    ? new Intl.DateTimeFormat('pt-BR', { day: '2-digit' }).format(first)
+    : formatCompactDate(first);
+  const lastLabel = new Intl.DateTimeFormat('pt-BR', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  }).format(last);
+
+  return `${firstLabel} - ${lastLabel}`;
 }
 
 function getConnectionTone(isOnline, isReady = false, isLoading = false) {
@@ -263,6 +342,8 @@ export default function App() {
   const [status, setStatus] = useState({ status: 'idle' });
   const [activity, setActivity] = useState([]);
   const [appointments, setAppointments] = useState([]);
+  const [agendaDate, setAgendaDate] = useState(() => new Date());
+  const [agendaView, setAgendaView] = useState('week');
   const [conversations, setConversations] = useState({});
   const [followups, setFollowups] = useState({ recent: [], upcoming: [] });
   const [leads, setLeads] = useState([]);
@@ -294,6 +375,21 @@ export default function App() {
   const selectedLead = useMemo(() => {
     return leads.find((lead) => lead.jid === selectedClientJid) || null;
   }, [leads, selectedClientJid]);
+  const sortedAppointments = useMemo(() => {
+    return [...appointments].sort((a, b) => new Date(a.startDateTime || 0).getTime() - new Date(b.startDateTime || 0).getTime());
+  }, [appointments]);
+  const agendaDays = useMemo(() => getWeekDays(agendaDate), [agendaDate]);
+  const appointmentsByDay = useMemo(() => {
+    return sortedAppointments.reduce((groups, appointment) => {
+      const key = getDateKey(appointment.startDateTime);
+      groups[key] = groups[key] || [];
+      groups[key].push(appointment);
+      return groups;
+    }, {});
+  }, [sortedAppointments]);
+  const weeklyAppointmentCount = useMemo(() => {
+    return agendaDays.reduce((total, day) => total + (appointmentsByDay[getDateKey(day)]?.length || 0), 0);
+  }, [agendaDays, appointmentsByDay]);
   const selectedConversation = selectedClientJid ? conversations[selectedClientJid] : null;
   const selectedMessages = selectedConversation?.messages || [];
 
@@ -668,59 +764,107 @@ export default function App() {
     );
   }
 
+  function renderAgendaEvent(item, { compact = false } = {}) {
+    const route = item.source === 'pipeline' ? `${getAppointmentRoute(item)} - Pipeline` : getAppointmentRoute(item);
+
+    return (
+      <article className={`calendar-event ${item.status || 'scheduled'} ${item.leadType || 'unknown'} ${compact ? 'compact' : ''}`} key={item.id || item.eventId}>
+        <div className="calendar-event-time">
+          <strong>{formatTime(item.startDateTime)}</strong>
+          {!compact ? <span>{formatDate(item.startDateTime)}</span> : null}
+        </div>
+        <div className="calendar-event-main">
+          <strong>{item.contactName || item.attendeeEmail || item.jid || 'Cliente'}</strong>
+          <span>{item.title || 'Reuniao marcada'}</span>
+          <small>{route}</small>
+        </div>
+        <div className="calendar-event-meta">
+          <Tag type={getAppointmentStatusTag(item.status)}>{getAppointmentStatusLabel(item.status)}</Tag>
+          <div className="calendar-event-actions">
+            {item.calendarLink ? (
+              <a className="link-button" href={item.calendarLink} target="_blank" rel="noreferrer" aria-label="Abrir no Google Agenda">
+                <CalendarCheck size={16} />
+                {!compact ? 'Agenda' : null}
+              </a>
+            ) : null}
+            {item.meetLink ? (
+              <a className="link-button" href={item.meetLink} target="_blank" rel="noreferrer" aria-label="Abrir Meet">
+                <ArrowUpRight size={16} />
+                {!compact ? 'Meet' : null}
+              </a>
+            ) : null}
+          </div>
+        </div>
+      </article>
+    );
+  }
+
   function renderAppointments() {
     return (
       <section className="agenda-page">
-        <article className="panel agenda-panel">
-          <div className="panel-header">
-            <div>
-              <span className="eyebrow">Sistema</span>
-              <h2>Reunioes registradas</h2>
+        <article className="calendar-shell">
+          <div className="calendar-toolbar">
+            <div className="calendar-navigation">
+              <button type="button" className="today-button" onClick={() => setAgendaDate(new Date())}>
+                Hoje
+              </button>
+              <button type="button" className="icon-button" onClick={() => setAgendaDate((date) => addDays(date, -7))} aria-label="Semana anterior">
+                <ChevronLeft size={17} />
+              </button>
+              <button type="button" className="icon-button" onClick={() => setAgendaDate((date) => addDays(date, 7))} aria-label="Proxima semana">
+                <ChevronRight size={17} />
+              </button>
+              <div className="calendar-title">
+                <CalendarDays size={20} />
+                <strong>{formatAgendaRange(agendaDays)}</strong>
+              </div>
             </div>
-            <Tag type="neutral">{appointments.length} registros</Tag>
+
+            <div className="calendar-toolbar-side">
+              <Tag type="neutral">{agendaView === 'week' ? `${weeklyAppointmentCount} na semana` : `${appointments.length} registros`}</Tag>
+              <div className="segmented-control" aria-label="Modo da agenda">
+                <button type="button" className={agendaView === 'week' ? 'active' : ''} onClick={() => setAgendaView('week')}>
+                  Semana
+                </button>
+                <button type="button" className={agendaView === 'list' ? 'active' : ''} onClick={() => setAgendaView('list')}>
+                  Lista
+                </button>
+              </div>
+            </div>
           </div>
 
-          <div className="agenda-list">
-            {appointments.length ? (
-              appointments.map((item) => (
-                <div className={`agenda-row ${item.status || 'scheduled'}`} key={item.id || item.eventId}>
-                  <div className="agenda-time">
-                    <strong>{formatTime(item.startDateTime)}</strong>
-                    <span>{formatDate(item.startDateTime)}</span>
-                  </div>
+          {agendaView === 'week' ? (
+            <div className="calendar-week-grid">
+              {agendaDays.map((day) => {
+                const dayAppointments = appointmentsByDay[getDateKey(day)] || [];
 
-                  <div className="agenda-main">
-                    <strong>{item.contactName || item.attendeeEmail || item.jid || 'Cliente'}</strong>
-                    <span>{item.title || 'Reuniao marcada'}</span>
-                    <small>{item.attendeeEmail || item.jid || 'Sem contato salvo'}</small>
-                  </div>
+                return (
+                  <section className={`calendar-day ${isSameDay(day, new Date()) ? 'today' : ''}`} key={getDateKey(day)}>
+                    <header className="calendar-day-header">
+                      <span>{formatWeekday(day)}</span>
+                      <strong>{new Intl.DateTimeFormat('pt-BR', { day: '2-digit' }).format(day)}</strong>
+                    </header>
 
-                  <div className="agenda-route">
-                    <Tag type={getAppointmentStatusTag(item.status)}>{getAppointmentStatusLabel(item.status)}</Tag>
-                    <small>{item.source === 'pipeline' ? `${getAppointmentRoute(item)} - Pipeline` : getAppointmentRoute(item)}</small>
-                  </div>
-
-                  <div className="agenda-actions">
-                    {item.calendarLink ? (
-                      <a className="link-button" href={item.calendarLink} target="_blank" rel="noreferrer">
-                        <CalendarCheck size={16} />
-                        Agenda
-                      </a>
-                    ) : null}
-                    {item.meetLink ? (
-                      <a className="link-button" href={item.meetLink} target="_blank" rel="noreferrer">
-                        <ArrowUpRight size={16} />
-                        Meet
-                      </a>
-                    ) : null}
-                    {!item.calendarLink && !item.meetLink ? <small className="agenda-empty-link">Sem link</small> : null}
-                  </div>
-                </div>
-              ))
-            ) : (
-              <p className="empty-state">Nenhuma reuniao registrada na agenda interna.</p>
-            )}
-          </div>
+                    <div className="calendar-day-events">
+                      {dayAppointments.length ? (
+                        dayAppointments.map((item) => renderAgendaEvent(item, { compact: true }))
+                      ) : (
+                        <span className="calendar-empty-slot">Sem reuniões</span>
+                      )}
+                    </div>
+                  </section>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="calendar-list">
+              {sortedAppointments.length ? (
+                sortedAppointments.map((item) => renderAgendaEvent(item))
+              ) : (
+                <p className="empty-state">Nenhuma reuniao registrada na agenda interna.</p>
+              )}
+            </div>
+          )}
         </article>
       </section>
     );
