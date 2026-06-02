@@ -897,6 +897,44 @@ export class WhatsAppClient extends EventEmitter {
     };
   }
 
+  async getSessionDiagnostics() {
+    const result = {
+      authDir: this.authDir,
+      exists: false,
+      fileCount: 0,
+      hasCreds: false,
+      creds: null,
+    };
+
+    try {
+      const files = await fs.readdir(this.authDir);
+      result.exists = true;
+      result.fileCount = files.length;
+      result.hasCreds = files.includes('creds.json');
+
+      if (result.hasCreds) {
+        const credsPath = path.join(this.authDir, 'creds.json');
+        const [stats, rawCreds] = await Promise.all([fs.stat(credsPath), fs.readFile(credsPath, 'utf8')]);
+        const creds = JSON.parse(rawCreds);
+        const idDigits = String(creds.me?.id || '').replace(/\D/g, '');
+        const lidDigits = String(creds.me?.lid || '').replace(/\D/g, '');
+
+        result.creds = {
+          idEnding: idDigits ? idDigits.slice(-4) : null,
+          lidEnding: lidDigits ? lidDigits.slice(-4) : null,
+          modifiedAt: stats.mtime.toISOString(),
+          name: creds.me?.name || null,
+          platform: creds.platform || null,
+          registered: Boolean(creds.registered),
+        };
+      }
+    } catch (error) {
+      result.error = error.code === 'ENOENT' ? 'session_dir_not_found' : error.message;
+    }
+
+    return result;
+  }
+
   emitState() {
     this.emit('state', this.getState());
   }

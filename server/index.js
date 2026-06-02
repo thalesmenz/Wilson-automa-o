@@ -171,6 +171,26 @@ app.get('/api/google/callback', async (req, res) => {
   }
 });
 
+app.get('/api/google/events/:eventId', async (req, res) => {
+  try {
+    const event = await calendar.getMeeting({
+      calendarId: req.query?.calendarId,
+      eventId: req.params.eventId,
+      leadType: req.query?.leadType,
+    });
+
+    res.json({ found: true, event });
+  } catch (error) {
+    const status = error.code === 404 || error.status === 404 ? 404 : 400;
+
+    res.status(status).json({
+      error: error.message,
+      found: false,
+      status: error.code || error.status || status,
+    });
+  }
+});
+
 app.post('/api/google/disconnect', async (req, res) => {
   try {
     const result = await calendar.disconnectOAuth({ leadType: req.body?.leadType });
@@ -195,6 +215,14 @@ app.post('/api/whatsapp/connect', async (_req, res) => {
   try {
     const state = await whatsapp.connect();
     res.json(state);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/whatsapp/session-diagnostics', async (_req, res) => {
+  try {
+    res.json(await whatsapp.getSessionDiagnostics());
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

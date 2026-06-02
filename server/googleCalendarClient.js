@@ -160,6 +160,20 @@ function getMeetLink(event) {
   );
 }
 
+function summarizeCalendarEvent(event, { calendarId, leadType } = {}) {
+  return {
+    calendarId,
+    calendarLink: event.htmlLink || null,
+    endDateTime: event.end?.dateTime || event.end?.date || null,
+    eventId: event.id,
+    leadType,
+    meetLink: getMeetLink(event),
+    startDateTime: event.start?.dateTime || event.start?.date || null,
+    status: event.status || null,
+    title: event.summary || null,
+  };
+}
+
 export class GoogleCalendarClient {
   constructor({
     calendarId = process.env.GOOGLE_CALENDAR_ID,
@@ -499,16 +513,44 @@ export class GoogleCalendarClient {
       sendUpdates: attendeeEmail ? 'all' : 'none',
       requestBody,
     });
+    const eventId = result.data.id;
+    const verifiedEvent = await this.getMeeting({
+      calendarId: targetCalendarId,
+      eventId,
+      leadType,
+    });
+
+    if (verifiedEvent.status === 'cancelled') {
+      throw new Error('Google Agenda criou o evento, mas ele voltou como cancelado.');
+    }
 
     return {
-      calendarLink: result.data.htmlLink || null,
+      calendarLink: verifiedEvent.calendarLink,
       calendarId: targetCalendarId,
-      eventId: result.data.id,
+      eventId,
       leadType,
-      meetLink: getMeetLink(result.data),
-      startDateTime: result.data.start?.dateTime || start.toISOString(),
-      title: result.data.summary || title,
+      meetLink: verifiedEvent.meetLink,
+      startDateTime: verifiedEvent.startDateTime || start.toISOString(),
+      title: verifiedEvent.title || title,
     };
+  }
+
+  async getMeeting({ calendarId, eventId, leadType } = {}) {
+    if (!eventId) {
+      throw new Error('Evento do Google Agenda nao informado.');
+    }
+
+    const calendar = this.getCalendar(leadType);
+    const targetCalendarId = calendarId || this.getCalendarId(leadType);
+    const result = await calendar.events.get({
+      calendarId: targetCalendarId,
+      eventId,
+    });
+
+    return summarizeCalendarEvent(result.data, {
+      calendarId: targetCalendarId,
+      leadType,
+    });
   }
 
   async listAvailableSlots({
