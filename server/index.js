@@ -380,7 +380,29 @@ server.listen(port, () => {
   console.log(`Front em ${clientOrigin}`);
 
   if (whatsappAutoConnect) {
-    const timer = setTimeout(() => {
+    const timer = setTimeout(async () => {
+      const diagnostics = await whatsapp.getSessionDiagnostics().catch((error) => {
+        addActivity({
+          id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+          type: 'error',
+          message: 'Falha ao verificar sessão do WhatsApp antes da reconexão automática.',
+          meta: { error: error.message },
+          createdAt: new Date().toISOString(),
+        });
+        return null;
+      });
+
+      if (!diagnostics?.hasCreds) {
+        addActivity({
+          id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+          type: 'connection',
+          message: 'Reconexão automática do WhatsApp não iniciada: sessão local ausente.',
+          meta: { authDir: diagnostics?.authDir, exists: diagnostics?.exists },
+          createdAt: new Date().toISOString(),
+        });
+        return;
+      }
+
       whatsapp.connect().catch((error) => {
         addActivity({
           id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
