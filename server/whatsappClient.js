@@ -2386,8 +2386,10 @@ export class WhatsAppClient extends EventEmitter {
     }
 
     const phoneCall = isPhoneCallSchedule(data);
+    let event;
+
     try {
-      const event = await this.calendar.createMeeting({
+      event = await this.calendar.createMeeting({
         attendeeEmail: data.attendeeEmail,
         attendeeName: data.attendeeName || contactName,
         createMeet: !phoneCall,
@@ -2403,60 +2405,6 @@ export class WhatsAppClient extends EventEmitter {
         startDateTime: data.startDateTime,
         title: buildCalendarTitle(data, contactName),
       });
-
-      await this.clearSchedulingState(jid);
-      await this.recordLeadStatus({
-        calendarId: event.calendarId,
-        contactName,
-        eventId: event.eventId,
-        jid,
-        leadType: data.calendarLeadType || data.leadType,
-        meetingAt: event.startDateTime,
-        status: 'meeting_created',
-      });
-      this.emitActivity('calendar', 'Reuniao criada no Google Agenda.', {
-        calendarId: event.calendarId,
-        eventId: event.eventId,
-        leadType: event.leadType,
-      });
-      await this.saveAppointment({
-        attendeeEmail: data.attendeeEmail,
-        calendarId: event.calendarId,
-        calendarLink: event.calendarLink,
-        contactName,
-        eventId: event.eventId,
-        jid,
-        leadType: data.calendarLeadType || data.leadType,
-        meetLink: event.meetLink,
-        startDateTime: event.startDateTime,
-        title: event.title,
-      });
-
-      const meetingDate = formatMeetingDate(event.startDateTime);
-      const meetLine = event.meetLink ? `\nLink do Meet: ${event.meetLink}` : '';
-      const calendarLine = event.calendarLink ? `\nConvite: ${event.calendarLink}` : '';
-
-      if (phoneCall) {
-        if (data.segment === 'agro' || data.preferredService === 'agro') {
-          return {
-            ...this.defaultReply,
-            name: 'Google Agenda',
-            response: `Ligação de atendimento preferencial Cresce Mais marcada para ${meetingDate}. O especialista responsável vai chamar pelo telefone/WhatsApp ${data.contactPhone}.`,
-          };
-        }
-
-        return {
-          ...this.defaultReply,
-          name: 'Google Agenda',
-          response: `Ligação marcada para ${meetingDate}. O especialista responsável vai chamar pelo telefone/WhatsApp ${data.contactPhone}.`,
-        };
-      }
-
-      return {
-        ...this.defaultReply,
-        name: 'Google Agenda',
-        response: `Consulta marcada para ${meetingDate}. Encaminhei para a agenda do especialista responsável e enviei o convite para ${data.attendeeEmail}.${meetLine}${calendarLine}`,
-      };
     } catch (error) {
       this.emitActivity('error', 'Falha ao criar evento no Google Agenda.', { error: error.message });
 
@@ -2467,6 +2415,95 @@ export class WhatsAppClient extends EventEmitter {
           'Tentei marcar no Google Agenda, mas deu erro na integracao. Vou encaminhar para um atendente confirmar manualmente.',
       };
     }
+
+    if (!event?.eventId) {
+      this.emitActivity('error', 'Google Agenda respondeu sem ID do evento.', {
+        calendarId: event?.calendarId,
+        jid,
+      });
+
+      return {
+        ...this.defaultReply,
+        name: 'Google Agenda',
+        response:
+          'Tentei marcar no Google Agenda, mas a integração não retornou o ID do evento. Vou encaminhar para um atendente confirmar manualmente.',
+      };
+    }
+
+    const savedAppointment = await this.saveAppointment({
+      attendeeEmail: data.attendeeEmail,
+      calendarId: event.calendarId,
+      calendarLink: event.calendarLink,
+      contactName,
+      eventId: event.eventId,
+      jid,
+      leadType: data.calendarLeadType || data.leadType,
+      meetLink: event.meetLink,
+      startDateTime: event.startDateTime,
+      title: event.title,
+    });
+
+    try {
+      await this.clearSchedulingState(jid);
+      await this.recordLeadStatus({
+        appointmentId: savedAppointment?.id,
+        appointmentSaved: Boolean(savedAppointment),
+        calendarId: event.calendarId,
+        calendarLink: event.calendarLink,
+        contactName,
+        eventId: event.eventId,
+        jid,
+        leadType: data.calendarLeadType || data.leadType,
+        meetingAt: event.startDateTime,
+        meetLink: event.meetLink,
+        status: 'meeting_created',
+        verificationError: event.verificationError,
+        verified: event.verified,
+      });
+    } catch (error) {
+      this.emitActivity('error', 'Reuniao criada no Google Agenda, mas falhou ao atualizar a pipeline.', {
+        error: error.message,
+        calendarId: event.calendarId,
+        eventId: event.eventId,
+        jid,
+      });
+    }
+
+    this.emitActivity('calendar', 'Reuniao criada no Google Agenda.', {
+      appointmentId: savedAppointment?.id,
+      appointmentSaved: Boolean(savedAppointment),
+      calendarId: event.calendarId,
+      eventId: event.eventId,
+      leadType: event.leadType,
+      verificationError: event.verificationError,
+      verified: event.verified,
+    });
+
+    const meetingDate = formatMeetingDate(event.startDateTime);
+    const meetLine = event.meetLink ? `\nLink do Meet: ${event.meetLink}` : '';
+    const calendarLine = event.calendarLink ? `\nConvite: ${event.calendarLink}` : '';
+
+    if (phoneCall) {
+      if (data.segment === 'agro' || data.preferredService === 'agro') {
+        return {
+          ...this.defaultReply,
+          name: 'Google Agenda',
+          response: `Ligação de atendimento preferencial Cresce Mais marcada para ${meetingDate}. O especialista responsável vai chamar pelo telefone/WhatsApp ${data.contactPhone}.`,
+        };
+      }
+
+      return {
+        ...this.defaultReply,
+        name: 'Google Agenda',
+        response: `Ligação marcada para ${meetingDate}. O especialista responsável vai chamar pelo telefone/WhatsApp ${data.contactPhone}.`,
+      };
+    }
+
+    return {
+      ...this.defaultReply,
+      name: 'Google Agenda',
+      response: `Consulta marcada para ${meetingDate}. Encaminhei para a agenda do especialista responsável e enviei o convite para ${data.attendeeEmail}.${meetLine}${calendarLine}`,
+    };
   }
 
   async saveAppointment(appointment) {

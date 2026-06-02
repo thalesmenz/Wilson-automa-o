@@ -14,6 +14,10 @@ const DEFAULT_AVAILABILITY_START_TIME = process.env.GOOGLE_CALENDAR_WORKDAY_STAR
 const DEFAULT_AVAILABILITY_END_TIME = process.env.GOOGLE_CALENDAR_WORKDAY_END || '18:00';
 const DEFAULT_AVAILABILITY_WORKDAYS = process.env.GOOGLE_CALENDAR_WORKDAYS || '1,2,3,4,5';
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function normalizePrivateKey(value) {
   return String(value || '').replace(/\\n/g, '\n').trim();
 }
@@ -517,14 +521,22 @@ export class GoogleCalendarClient {
     let verifiedEvent = null;
     let verificationError = null;
 
-    try {
-      verifiedEvent = await this.getMeeting({
-        calendarId: targetCalendarId,
-        eventId,
-        leadType,
-      });
-    } catch (error) {
-      verificationError = error.message;
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      try {
+        verifiedEvent = await this.getMeeting({
+          calendarId: targetCalendarId,
+          eventId,
+          leadType,
+        });
+        verificationError = null;
+        break;
+      } catch (error) {
+        verificationError = error.message;
+
+        if (attempt < 3) {
+          await sleep(350 * attempt);
+        }
+      }
     }
 
     if (verifiedEvent?.status === 'cancelled') {
