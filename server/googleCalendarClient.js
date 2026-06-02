@@ -514,24 +514,33 @@ export class GoogleCalendarClient {
       requestBody,
     });
     const eventId = result.data.id;
-    const verifiedEvent = await this.getMeeting({
-      calendarId: targetCalendarId,
-      eventId,
-      leadType,
-    });
+    let verifiedEvent = null;
+    let verificationError = null;
 
-    if (verifiedEvent.status === 'cancelled') {
+    try {
+      verifiedEvent = await this.getMeeting({
+        calendarId: targetCalendarId,
+        eventId,
+        leadType,
+      });
+    } catch (error) {
+      verificationError = error.message;
+    }
+
+    if (verifiedEvent?.status === 'cancelled') {
       throw new Error('Google Agenda criou o evento, mas ele voltou como cancelado.');
     }
 
     return {
-      calendarLink: verifiedEvent.calendarLink,
+      calendarLink: verifiedEvent?.calendarLink || result.data.htmlLink || null,
       calendarId: targetCalendarId,
       eventId,
       leadType,
-      meetLink: verifiedEvent.meetLink,
-      startDateTime: verifiedEvent.startDateTime || start.toISOString(),
-      title: verifiedEvent.title || title,
+      meetLink: verifiedEvent?.meetLink || getMeetLink(result.data),
+      startDateTime: verifiedEvent?.startDateTime || result.data.start?.dateTime || start.toISOString(),
+      title: verifiedEvent?.title || result.data.summary || title,
+      verificationError,
+      verified: Boolean(verifiedEvent),
     };
   }
 
