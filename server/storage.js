@@ -297,7 +297,7 @@ export class AutomationStore {
       updatedAt: nextMessage.createdAt,
     };
     existing.updatedAt = nextMessage.createdAt;
-    existing.messages = [...existing.messages, nextMessage].slice(-40);
+    existing.messages = [...existing.messages, nextMessage];
     this.conversations[jid] = existing;
 
     await this.saveConversations(existing);
@@ -320,6 +320,7 @@ export class AutomationStore {
       calendarId: payload.calendarId ?? previousLead.calendarId ?? null,
       eventId: payload.eventId ?? previousLead.eventId ?? null,
       meetingAt: payload.meetingAt ?? previousLead.meetingAt ?? null,
+      scheduling: payload.scheduling === undefined ? previousLead.scheduling ?? null : payload.scheduling,
       updatedAt: new Date().toISOString(),
     };
     const changed =
@@ -340,6 +341,63 @@ export class AutomationStore {
       lead,
       previousLead,
     };
+  }
+
+  getSchedulingState(jid) {
+    return this.conversations[jid]?.lead?.scheduling || null;
+  }
+
+  async setSchedulingState(jid, scheduling, { contactName } = {}) {
+    if (!jid || !scheduling) {
+      return null;
+    }
+
+    const now = new Date().toISOString();
+    const existing = this.conversations[jid] || {
+      jid,
+      contactName: contactName || jid,
+      messages: [],
+      lead: {
+        status: 'new',
+        route: 'Aguardando',
+        updatedAt: now,
+      },
+      updatedAt: now,
+    };
+
+    existing.contactName = contactName || existing.contactName;
+    existing.lead = {
+      ...(existing.lead || {}),
+      scheduling: {
+        ...scheduling,
+        updatedAt: scheduling.updatedAt || now,
+      },
+      updatedAt: now,
+    };
+    existing.updatedAt = now;
+    this.conversations[jid] = existing;
+
+    await this.saveConversations(existing);
+    return existing.lead.scheduling;
+  }
+
+  async clearSchedulingState(jid) {
+    const existing = this.conversations[jid];
+    if (!existing?.lead?.scheduling) {
+      return null;
+    }
+
+    const now = new Date().toISOString();
+    existing.lead = {
+      ...existing.lead,
+      scheduling: null,
+      updatedAt: now,
+    };
+    existing.updatedAt = now;
+    this.conversations[jid] = existing;
+
+    await this.saveConversations(existing);
+    return existing.lead;
   }
 
   async addEvent(event = {}) {

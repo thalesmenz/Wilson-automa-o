@@ -211,9 +211,11 @@ export default function App() {
   const [activeView, setActiveView] = useState('overview');
   const [status, setStatus] = useState({ status: 'idle' });
   const [activity, setActivity] = useState([]);
+  const [conversations, setConversations] = useState({});
   const [followups, setFollowups] = useState({ recent: [], upcoming: [] });
   const [leads, setLeads] = useState([]);
   const [notice, setNotice] = useState('');
+  const [selectedClientJid, setSelectedClientJid] = useState(null);
   const [summary, setSummary] = useState(EMPTY_SUMMARY);
   const [busy, setBusy] = useState(false);
   const [qrModalOpen, setQrModalOpen] = useState(false);
@@ -237,21 +239,28 @@ export default function App() {
     ...metric,
     value: summary[metric.key] ?? 0,
   }));
+  const selectedLead = useMemo(() => {
+    return leads.find((lead) => lead.jid === selectedClientJid) || null;
+  }, [leads, selectedClientJid]);
+  const selectedConversation = selectedClientJid ? conversations[selectedClientJid] : null;
+  const selectedMessages = selectedConversation?.messages || [];
 
   const recentActivity = useMemo(() => {
     return activity.slice(0, 4);
   }, [activity]);
 
   async function refreshDashboard() {
-    const [summaryPayload, leadsPayload, followupsPayload] = await Promise.all([
+    const [summaryPayload, leadsPayload, followupsPayload, conversationsPayload] = await Promise.all([
       request('/api/dashboard/summary'),
       request('/api/leads'),
       request('/api/followups'),
+      request('/api/conversations'),
     ]);
 
     setSummary({ ...EMPTY_SUMMARY, ...(summaryPayload || {}) });
     setLeads(Array.isArray(leadsPayload) ? leadsPayload : []);
     setFollowups(followupsPayload || { recent: [], upcoming: [] });
+    setConversations(conversationsPayload && typeof conversationsPayload === 'object' ? conversationsPayload : {});
   }
 
   useEffect(() => {
@@ -266,6 +275,9 @@ export default function App() {
       setStatus((current) => ({ ...current, ...payload, status: 'qr' }));
     });
     socket.on('activity:init', setActivity);
+    socket.on('conversations', (payload) => {
+      setConversations(payload && typeof payload === 'object' ? payload : {});
+    });
     socket.on('activity', (item) => {
       setActivity((current) => [item, ...current].slice(0, 8));
       refreshDashboard().catch(() => null);
@@ -273,6 +285,22 @@ export default function App() {
 
     return () => socket.disconnect();
   }, []);
+
+  useEffect(() => {
+    if (selectedClientJid && !leads.some((lead) => lead.jid === selectedClientJid)) {
+      setSelectedClientJid(null);
+    }
+  }, [leads, selectedClientJid]);
+
+  useEffect(() => {
+    if (activeView !== 'clients' || !selectedClientJid || !window.matchMedia('(max-width: 920px)').matches) {
+      return;
+    }
+
+    window.requestAnimationFrame(() => {
+      document.querySelector('.conversation-panel')?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    });
+  }, [activeView, selectedClientJid]);
 
   async function runAction(action, successMessage) {
     setBusy(true);
@@ -398,28 +426,74 @@ export default function App() {
           <Tag type="neutral">{leads.length} registros</Tag>
         </div>
 
-        <div className="client-list">
-          {leads.length ? (
-            leads.map((lead) => (
-              <div className="client-row" key={lead.jid}>
-                <div className="client-avatar">{(lead.contactName || lead.phone || '?').slice(0, 1)}</div>
-                <div className="client-main">
-                  <div className="client-heading">
-                    <strong>{lead.contactName || lead.phone}</strong>
-                    <time>{formatTime(lead.lastMessageAt)}</time>
+        <div className={`clients-layout ${selectedLead ? 'has-selection' : ''}`}>
+          <div className="client-list">
+            {leads.length ? (
+              leads.map((lead) => (
+                <button
+                  type="button"
+                  className={`client-row ${selectedClientJid === lead.jid ? 'selected' : ''}`}
+                  key={lead.jid}
+                  onClick={() => setSelectedClientJid(lead.jid)}
+                >
+                  <div className="client-avatar">{(lead.contactName || lead.phone || '?').slice(0, 1)}</div>
+                  <div className="client-main">
+                    <div className="client-heading">
+                      <strong>{lead.contactName || lead.phone}</strong>
+                      <time>{formatTime(lead.lastMessageAt)}</time>
+                    </div>
+                    <span>{lead.phone}</span>
+                    <p>{lead.lastMessage || 'Sem mensagens recentes.'}</p>
                   </div>
-                  <span>{lead.phone}</span>
-                  <p>{lead.lastMessage || 'Sem mensagens recentes.'}</p>
+                  <div className="client-route">
+                    <Tag type={getLeadTag(lead)}>{getLeadLabel(lead)}</Tag>
+                    <small>{lead.route}</small>
+                  </div>
+                </button>
+              ))
+            ) : (
+              <p className="empty-state">Nenhum cliente registrado ainda.</p>
+            )}
+          </div>
+
+          <section className={`conversation-panel ${selectedLead ? '' : 'empty'}`}>
+            {selectedLead ? (
+              <>
+                <div className="conversation-header">
+                  <div className="conversation-title">
+                    <strong>{selectedLead.contactName || selectedLead.phone || 'Cliente'}</strong>
+                    <span>{selectedLead.phone || selectedLead.jid}</span>
+                  </div>
+                  <div className="conversation-status">
+                    <Tag type={getLeadTag(selectedLead)}>{getLeadLabel(selectedLead)}</Tag>
+                    <small>{selectedMessages.length} mensagens</small>
+                  </div>
                 </div>
-                <div className="client-route">
-                  <Tag type={getLeadTag(lead)}>{getLeadLabel(lead)}</Tag>
-                  <small>{lead.route}</small>
+
+                <div className="conversation-messages">
+                  {selectedMessages.length ? (
+                    selectedMessages.map((message) => (
+                      <div className={`message-bubble ${message.direction === 'out' ? 'out' : 'in'}`} key={message.id}>
+                        <div className="message-meta">
+                          <strong>{message.direction === 'out' ? message.automationName || 'Bot' : 'Cliente'}</strong>
+                          <time>{formatTime(message.createdAt)}</time>
+                        </div>
+                        <p>{message.text || 'Mensagem sem texto.'}</p>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="empty-state">Sem historico salvo para este cliente.</p>
+                  )}
                 </div>
+              </>
+            ) : (
+              <div className="conversation-empty">
+                <MessageCircle size={34} />
+                <strong>Selecione um cliente</strong>
+                <span>A conversa completa aparece aqui.</span>
               </div>
-            ))
-          ) : (
-            <p className="empty-state">Nenhum cliente registrado ainda.</p>
-          )}
+            )}
+          </section>
         </div>
       </article>
     );

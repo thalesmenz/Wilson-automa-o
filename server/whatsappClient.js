@@ -911,6 +911,46 @@ export class WhatsAppClient extends EventEmitter {
     });
   }
 
+  getSchedulingState(jid) {
+    const cached = this.scheduling.get(jid);
+    if (cached) {
+      return cached;
+    }
+
+    const persisted = this.store?.getSchedulingState?.(jid);
+    if (persisted) {
+      this.scheduling.set(jid, persisted);
+    }
+
+    return persisted || null;
+  }
+
+  async setSchedulingState(jid, state, { contactName } = {}) {
+    if (!jid || !state) {
+      return null;
+    }
+
+    const nextState = {
+      ...state,
+      updatedAt: state.updatedAt || new Date().toISOString(),
+    };
+    this.scheduling.set(jid, nextState);
+
+    if (this.store?.setSchedulingState) {
+      await this.store.setSchedulingState(jid, nextState, { contactName });
+    }
+
+    return nextState;
+  }
+
+  async clearSchedulingState(jid) {
+    this.scheduling.delete(jid);
+
+    if (this.store?.clearSchedulingState) {
+      await this.store.clearSchedulingState(jid);
+    }
+  }
+
   async recordEvent(type, payload = {}) {
     if (!this.store?.addEvent) {
       return null;
@@ -1305,7 +1345,7 @@ export class WhatsAppClient extends EventEmitter {
       }
     }
 
-    this.scheduling.set(jid, {
+    await this.setSchedulingState(jid, {
       data: nextData,
       status: 'awaiting_details',
       updatedAt: new Date().toISOString(),
@@ -1358,7 +1398,7 @@ export class WhatsAppClient extends EventEmitter {
       }
     }
 
-    this.scheduling.set(jid, {
+    await this.setSchedulingState(jid, {
       data: nextData,
       status: 'awaiting_details',
       updatedAt: new Date().toISOString(),
@@ -1410,7 +1450,7 @@ export class WhatsAppClient extends EventEmitter {
       return this.createMissingDetailsReply({ data, jid, missing });
     }
 
-    this.scheduling.set(jid, {
+    await this.setSchedulingState(jid, {
       data,
       status: 'awaiting_confirmation',
       updatedAt: new Date().toISOString(),
@@ -1429,7 +1469,7 @@ export class WhatsAppClient extends EventEmitter {
       menu: 'analysis_details',
     };
 
-    this.scheduling.set(jid, {
+    await this.setSchedulingState(jid, {
       ...current,
       data,
       updatedAt: new Date().toISOString(),
@@ -1478,14 +1518,14 @@ export class WhatsAppClient extends EventEmitter {
       return null;
     }
 
-    let current = this.scheduling.get(jid);
+    let current = this.getSchedulingState(jid);
     const emailFromText = extractEmailFromText(text);
     const phoneCallPreference = getPhoneCallPreference(text, jid);
     const menuOption = getMenuOption(text);
 
     if (!current && isSimpleGreeting(text)) {
       const data = {};
-      this.scheduling.set(jid, {
+      await this.setSchedulingState(jid, {
         data,
         status: 'awaiting_document_type',
         updatedAt: new Date().toISOString(),
@@ -1507,7 +1547,7 @@ export class WhatsAppClient extends EventEmitter {
     }
 
     if (!current && (isAgroSegmentText(text) || isNonAgroSegmentText(text))) {
-      this.scheduling.set(jid, {
+      await this.setSchedulingState(jid, {
         data: {},
         status: 'awaiting_document_type',
         updatedAt: new Date().toISOString(),
@@ -1528,7 +1568,7 @@ export class WhatsAppClient extends EventEmitter {
           segment: 'person',
         };
 
-        this.scheduling.set(jid, {
+        await this.setSchedulingState(jid, {
           data,
           status: 'awaiting_qualification',
           updatedAt: new Date().toISOString(),
@@ -1559,7 +1599,7 @@ export class WhatsAppClient extends EventEmitter {
             segment: /\b(industria)\b/.test(normalized) ? 'industry' : /\b(comercio|servicos|servico|lojista)\b/.test(normalized) ? 'commerce_services' : 'other',
           };
 
-          this.scheduling.set(jid, {
+          await this.setSchedulingState(jid, {
             data,
             status: 'awaiting_qualification',
             updatedAt: new Date().toISOString(),
@@ -1572,7 +1612,7 @@ export class WhatsAppClient extends EventEmitter {
           };
         }
 
-        this.scheduling.set(jid, {
+        await this.setSchedulingState(jid, {
           data: baseData,
           status: 'awaiting_segment',
           updatedAt: new Date().toISOString(),
@@ -1596,7 +1636,7 @@ export class WhatsAppClient extends EventEmitter {
           segment: 'person',
         };
 
-        this.scheduling.set(jid, {
+        await this.setSchedulingState(jid, {
           data,
           status: 'awaiting_qualification',
           updatedAt: new Date().toISOString(),
@@ -1617,7 +1657,7 @@ export class WhatsAppClient extends EventEmitter {
           return this.createMissingDetailsReply({ data, jid, missing });
         }
 
-        this.scheduling.set(jid, {
+        await this.setSchedulingState(jid, {
           data,
           status: 'awaiting_confirmation',
           updatedAt: new Date().toISOString(),
@@ -1644,7 +1684,7 @@ export class WhatsAppClient extends EventEmitter {
           segment: 'unknown',
         });
 
-        this.scheduling.set(jid, {
+        await this.setSchedulingState(jid, {
           data,
           status: 'awaiting_payment_confirmation',
           updatedAt: new Date().toISOString(),
@@ -1663,7 +1703,7 @@ export class WhatsAppClient extends EventEmitter {
           segment: menuOption === 2 ? 'commerce_services' : menuOption === 3 ? 'industry' : 'other',
         };
 
-        this.scheduling.set(jid, {
+        await this.setSchedulingState(jid, {
           data,
           status: 'awaiting_qualification',
           updatedAt: new Date().toISOString(),
@@ -1681,7 +1721,7 @@ export class WhatsAppClient extends EventEmitter {
         segment: 'other',
       };
 
-      this.scheduling.set(jid, {
+      await this.setSchedulingState(jid, {
         data,
         status: 'awaiting_qualification',
         updatedAt: new Date().toISOString(),
@@ -1783,17 +1823,17 @@ export class WhatsAppClient extends EventEmitter {
       }
 
       if (detailsChanged) {
-        this.scheduling.set(jid, current);
+        await this.setSchedulingState(jid, current, { contactName });
         const missing = getScheduleMissing(current.data);
         if (missing.length) {
           return this.createMissingDetailsReply({ data: current.data, jid, missing });
         }
 
-        this.scheduling.set(jid, {
+        await this.setSchedulingState(jid, {
           data: current.data,
           status: 'awaiting_confirmation',
           updatedAt: new Date().toISOString(),
-        });
+        }, { contactName });
 
         return {
           ...this.defaultReply,
@@ -1818,11 +1858,11 @@ export class WhatsAppClient extends EventEmitter {
           paymentAmount: ANALYSIS_FEES[inferredLeadType],
         });
 
-        this.scheduling.set(jid, {
+        await this.setSchedulingState(jid, {
           data,
           status: 'awaiting_payment_confirmation',
           updatedAt: new Date().toISOString(),
-        });
+        }, { contactName });
 
         return {
           ...this.defaultReply,
@@ -1834,7 +1874,7 @@ export class WhatsAppClient extends EventEmitter {
 
     if (current?.status === 'awaiting_qualification' && menuOption) {
       if (current.data?.menu === 'curious_offer' && menuOption === 3) {
-        this.scheduling.delete(jid);
+        await this.clearSchedulingState(jid);
         await this.recordLeadStatus({
           contactName,
           jid,
@@ -1856,11 +1896,11 @@ export class WhatsAppClient extends EventEmitter {
           menu: 'curious_offer',
         });
 
-        this.scheduling.set(jid, {
+        await this.setSchedulingState(jid, {
           data,
           status: 'awaiting_qualification',
           updatedAt: new Date().toISOString(),
-        });
+        }, { contactName });
 
         return {
           ...this.defaultReply,
@@ -1882,11 +1922,11 @@ export class WhatsAppClient extends EventEmitter {
           paymentAmount: ANALYSIS_FEES[selectedLeadType],
         });
 
-        this.scheduling.set(jid, {
+        await this.setSchedulingState(jid, {
           data,
           status: 'awaiting_payment_confirmation',
           updatedAt: new Date().toISOString(),
-        });
+        }, { contactName });
 
         return {
           ...this.defaultReply,
@@ -1905,11 +1945,11 @@ export class WhatsAppClient extends EventEmitter {
         paymentAmount: ANALYSIS_FEES.low_ticket,
       });
 
-      this.scheduling.set(jid, {
+      await this.setSchedulingState(jid, {
         data,
         status: 'awaiting_payment_confirmation',
         updatedAt: new Date().toISOString(),
-      });
+      }, { contactName });
 
       return {
         ...this.defaultReply,
@@ -1929,7 +1969,7 @@ export class WhatsAppClient extends EventEmitter {
       }
 
       if (menuOption === 3 || isCancellation(text)) {
-        this.scheduling.delete(jid);
+        await this.clearSchedulingState(jid);
         return {
           ...this.defaultReply,
           name: 'Agenda',
@@ -1940,7 +1980,7 @@ export class WhatsAppClient extends EventEmitter {
 
     if (current?.status === 'awaiting_payment_confirmation') {
       if (menuOption === 3 || isCancellation(text)) {
-        this.scheduling.delete(jid);
+        await this.clearSchedulingState(jid);
         await this.recordLeadStatus({
           contactName,
           jid,
@@ -1965,14 +2005,14 @@ export class WhatsAppClient extends EventEmitter {
 
       if (menuOption === 2 || isMoreInfoRequest(text)) {
         if (current.data?.menu === 'analysis_details' || current.data?.menu === 'awaiting_custom_question') {
-          this.scheduling.set(jid, {
+          await this.setSchedulingState(jid, {
             ...current,
             data: {
               ...current.data,
               menu: 'awaiting_custom_question',
             },
             updatedAt: new Date().toISOString(),
-          });
+          }, { contactName });
 
           return {
             ...this.defaultReply,
@@ -1981,14 +2021,14 @@ export class WhatsAppClient extends EventEmitter {
           };
         }
 
-        this.scheduling.set(jid, {
+        await this.setSchedulingState(jid, {
           ...current,
           data: {
             ...current.data,
             menu: 'analysis_details',
           },
           updatedAt: new Date().toISOString(),
-        });
+        }, { contactName });
 
         return {
           ...this.defaultReply,
@@ -2018,7 +2058,7 @@ export class WhatsAppClient extends EventEmitter {
     }
 
     if (analysis.intent === 'cancel' && current) {
-      this.scheduling.delete(jid);
+      await this.clearSchedulingState(jid);
       if (['awaiting_document_type', 'awaiting_segment', 'awaiting_qualification', 'awaiting_payment_confirmation'].includes(current.status)) {
         await this.recordLeadStatus({
           contactName,
@@ -2076,7 +2116,7 @@ export class WhatsAppClient extends EventEmitter {
     const rawLeadType = String(analysis.leadType || data.leadType || '').trim();
 
     if (analysis.intent === 'discard' || isDiscardedLead(rawLeadType)) {
-      this.scheduling.delete(jid);
+      await this.clearSchedulingState(jid);
       await this.recordLeadStatus({
         contactName,
         jid,
@@ -2104,11 +2144,11 @@ export class WhatsAppClient extends EventEmitter {
     }
 
     if (leadType === 'unknown') {
-      this.scheduling.set(jid, {
+      await this.setSchedulingState(jid, {
         data,
         status: 'awaiting_qualification',
         updatedAt: new Date().toISOString(),
-      });
+      }, { contactName });
 
       return {
         ...this.defaultReply,
@@ -2118,11 +2158,11 @@ export class WhatsAppClient extends EventEmitter {
     }
 
     if (!data.analysisAccepted) {
-      this.scheduling.set(jid, {
+      await this.setSchedulingState(jid, {
         data,
         status: 'awaiting_payment_confirmation',
         updatedAt: new Date().toISOString(),
-      });
+      }, { contactName });
 
       return {
         ...this.defaultReply,
@@ -2146,11 +2186,11 @@ export class WhatsAppClient extends EventEmitter {
       return this.createMissingDetailsReply({ data, jid, missing });
     }
 
-    this.scheduling.set(jid, {
+    await this.setSchedulingState(jid, {
       data,
       status: 'awaiting_confirmation',
       updatedAt: new Date().toISOString(),
-    });
+    }, { contactName });
 
     return {
       ...this.defaultReply,
@@ -2252,7 +2292,7 @@ export class WhatsAppClient extends EventEmitter {
   }
 
   async confirmScheduledMeeting({ contactName, jid }) {
-    const current = this.scheduling.get(jid);
+    const current = this.getSchedulingState(jid);
     if (!current?.data) {
       return null;
     }
@@ -2282,7 +2322,7 @@ export class WhatsAppClient extends EventEmitter {
         title: buildCalendarTitle(data, contactName),
       });
 
-      this.scheduling.delete(jid);
+      await this.clearSchedulingState(jid);
       await this.recordLeadStatus({
         calendarId: event.calendarId,
         contactName,
