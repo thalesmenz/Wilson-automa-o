@@ -29,6 +29,24 @@ const whatsappSessionDir = process.env.WHATSAPP_SESSION_DIR
   : defaultWhatsappSessionDir;
 const whatsappAutoConnect = process.env.WHATSAPP_AUTO_CONNECT !== 'false';
 const whatsappClearSessionConfirmation = process.env.WHATSAPP_CLEAR_SESSION_CONFIRMATION || 'APAGAR_SESSAO_WHATSAPP';
+const diagnosticsApiToken = process.env.DIAGNOSTICS_API_TOKEN || null;
+
+function requireDiagnosticsAccess(req, res, next) {
+  if (!diagnosticsApiToken) {
+    res.status(404).json({ error: 'Not found' });
+    return;
+  }
+
+  const authorization = String(req.get('Authorization') || '');
+  const token = authorization.startsWith('Bearer ') ? authorization.slice('Bearer '.length).trim() : '';
+
+  if (token !== diagnosticsApiToken) {
+    res.status(403).json({ error: 'Acesso negado.' });
+    return;
+  }
+
+  next();
+}
 
 async function readSettings() {
   try {
@@ -174,7 +192,7 @@ app.get('/api/google/callback', async (req, res) => {
   }
 });
 
-app.get('/api/google/events/:eventId', async (req, res) => {
+app.get('/api/google/events/:eventId', requireDiagnosticsAccess, async (req, res) => {
   try {
     const event = await calendar.getMeeting({
       calendarId: req.query?.calendarId,
@@ -223,7 +241,7 @@ app.post('/api/whatsapp/connect', async (_req, res) => {
   }
 });
 
-app.get('/api/whatsapp/session-diagnostics', async (_req, res) => {
+app.get('/api/whatsapp/session-diagnostics', requireDiagnosticsAccess, async (_req, res) => {
   try {
     res.json(await whatsapp.getSessionDiagnostics());
   } catch (error) {
@@ -410,7 +428,7 @@ server.listen(port, () => {
           id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
           type: 'connection',
           message: 'Reconexão automática do WhatsApp não iniciada: sessão local ausente.',
-          meta: { authDir: diagnostics?.authDir, exists: diagnostics?.exists },
+          meta: { exists: diagnostics?.exists, fileCount: diagnostics?.fileCount },
           createdAt: new Date().toISOString(),
         });
         return;
