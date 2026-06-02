@@ -335,6 +335,7 @@ app.get('/api/appointments', async (req, res) => {
   try {
     const defaultFrom = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
     const appointments = await appointmentStore.listAppointments({
+      excludeDemo: req.query?.includeDemo !== 'true',
       from: req.query?.from || defaultFrom,
       limit: req.query?.limit || 500,
       status: req.query?.status,

@@ -143,7 +143,7 @@ export class AppointmentStore {
     return fromAppointmentRow(data);
   }
 
-  async listAppointments({ from, limit = 250, status, to } = {}) {
+  async listAppointments({ excludeDemo = false, from, limit = 250, status, to } = {}) {
     if (!this.isConfigured) {
       return [];
     }
@@ -157,6 +157,10 @@ export class AppointmentStore {
 
     if (status && status !== 'all') {
       query = query.eq('status', status);
+    }
+
+    if (excludeDemo) {
+      query = query.not('event_id', 'like', 'demo-%');
     }
 
     const fromIso = toIsoDateFilter(from);
