@@ -22,10 +22,13 @@ const clientOrigin = process.env.CLIENT_ORIGIN || 'http://localhost:5173';
 const settingsPath = process.env.APP_SETTINGS_PATH
   ? path.resolve(process.env.APP_SETTINGS_PATH)
   : path.join(__dirname, 'data', 'settings.json');
+const defaultWhatsappSessionDir =
+  process.env.NODE_ENV === 'production' ? '/var/data/baileys' : path.join(__dirname, 'sessions', 'baileys');
 const whatsappSessionDir = process.env.WHATSAPP_SESSION_DIR
   ? path.resolve(process.env.WHATSAPP_SESSION_DIR)
-  : path.join(__dirname, 'sessions', 'baileys');
+  : defaultWhatsappSessionDir;
 const whatsappAutoConnect = process.env.WHATSAPP_AUTO_CONNECT !== 'false';
+const whatsappClearSessionConfirmation = process.env.WHATSAPP_CLEAR_SESSION_CONFIRMATION || 'APAGAR_SESSAO_WHATSAPP';
 
 async function readSettings() {
   try {
@@ -230,7 +233,17 @@ app.get('/api/whatsapp/session-diagnostics', async (_req, res) => {
 
 app.post('/api/whatsapp/disconnect', async (req, res) => {
   try {
-    const state = await whatsapp.disconnect({ clearSession: Boolean(req.body?.clearSession) });
+    const clearSession = Boolean(req.body?.clearSession);
+
+    if (clearSession && String(req.body?.confirm || '').trim() !== whatsappClearSessionConfirmation) {
+      res.status(400).json({
+        error: 'Limpeza da sessao do WhatsApp bloqueada. Envie a confirmacao textual correta.',
+        requiredConfirmation: whatsappClearSessionConfirmation,
+      });
+      return;
+    }
+
+    const state = await whatsapp.disconnect({ clearSession });
     res.json(state);
   } catch (error) {
     res.status(500).json({ error: error.message });

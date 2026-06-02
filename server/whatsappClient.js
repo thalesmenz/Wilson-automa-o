@@ -57,6 +57,14 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function getSessionBackupName(reason) {
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const safeReason = normalizeText(reason)
+    .replace(/[^a-z0-9-]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return `${timestamp}-${safeReason || 'backup'}`;
+}
+
 function normalizeText(value) {
   return String(value || '')
     .normalize('NFD')
@@ -864,6 +872,9 @@ export class WhatsAppClient extends EventEmitter {
     super();
     this.appointmentStore = appointmentStore;
     this.authDir = authDir;
+    this.sessionBackupDir = process.env.WHATSAPP_SESSION_BACKUP_DIR
+      ? path.resolve(process.env.WHATSAPP_SESSION_BACKUP_DIR)
+      : path.join(path.dirname(authDir), 'baileys-backups');
     this.calendar = calendar;
     this.gemini = gemini;
     this.store = store;
@@ -904,6 +915,9 @@ export class WhatsAppClient extends EventEmitter {
       fileCount: 0,
       hasCreds: false,
       creds: null,
+      backupDir: this.sessionBackupDir,
+      backupCount: 0,
+      latestBackup: null,
     };
 
     try {
@@ -932,7 +946,37 @@ export class WhatsAppClient extends EventEmitter {
       result.error = error.code === 'ENOENT' ? 'session_dir_not_found' : error.message;
     }
 
+    try {
+      const backups = await fs.readdir(this.sessionBackupDir);
+      const sortedBackups = backups.sort();
+      result.backupCount = sortedBackups.length;
+      result.latestBackup = sortedBackups.at(-1) || null;
+    } catch (error) {
+      if (error.code !== 'ENOENT') {
+        result.backupError = error.message;
+      }
+    }
+
     return result;
+  }
+
+  async backupSession({ reason = 'manual' } = {}) {
+    const diagnostics = await this.getSessionDiagnostics();
+
+    if (!diagnostics.exists || diagnostics.fileCount === 0) {
+      return null;
+    }
+
+    const backupName = getSessionBackupName(reason);
+    const backupDir = path.join(this.sessionBackupDir, backupName);
+    await fs.mkdir(this.sessionBackupDir, { recursive: true });
+    await fs.cp(this.authDir, backupDir, { recursive: true, errorOnExist: true, force: false });
+
+    return {
+      backupDir,
+      fileCount: diagnostics.fileCount,
+      hasCreds: diagnostics.hasCreds,
+    };
   }
 
   emitState() {
@@ -2556,12 +2600,10 @@ export class WhatsAppClient extends EventEmitter {
     this.manualDisconnect = true;
     clearTimeout(this.reconnectTimer);
 
+    const sessionBackup = clearSession ? await this.backupSession({ reason: 'before-clear-session' }) : null;
+
     if (this.sock) {
-      if (clearSession) {
-        await this.sock.logout().catch(() => null);
-      } else {
-        this.sock.end?.(undefined);
-      }
+      this.sock.end?.(undefined);
     }
 
     this.sock = null;
@@ -2572,11 +2614,13 @@ export class WhatsAppClient extends EventEmitter {
 
     if (clearSession) {
       await fs.rm(this.authDir, { recursive: true, force: true });
-      this.emitActivity('connection', 'Sessao local removida.');
+      this.emitActivity('connection', 'Sessao local removida.', {
+        backupDir: sessionBackup?.backupDir || null,
+      });
     }
 
     this.emitActivity('connection', 'WhatsApp desconectado manualmente.');
     this.emitState();
-    return this.getState();
+    return sessionBackup ? { ...this.getState(), sessionBackup } : this.getState();
   }
 }

@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+const WHATSAPP_CLEAR_SESSION_CONFIRMATION = 'APAGAR_SESSAO_WHATSAPP';
 
 const STATUS_LABELS = {
   idle: 'Aguardando',
@@ -329,6 +330,24 @@ export default function App() {
       const payload = await request('/api/whatsapp/disconnect', { method: 'POST', body: JSON.stringify({ clearSession: false }) });
       setStatus(payload);
     }, 'WhatsApp desconectado.');
+  }
+
+  async function clearWhatsAppSession() {
+    const confirmation = window.prompt(`Digite ${WHATSAPP_CLEAR_SESSION_CONFIRMATION} para limpar a sessao local do WhatsApp.`);
+
+    if (confirmation !== WHATSAPP_CLEAR_SESSION_CONFIRMATION) {
+      setNotice('Limpeza da sessao cancelada.');
+      return;
+    }
+
+    await runAction(
+      () =>
+        request('/api/whatsapp/disconnect', {
+          method: 'POST',
+          body: JSON.stringify({ clearSession: true, confirm: confirmation }),
+        }),
+      'Backup criado e sessao local limpa.'
+    );
   }
 
   async function toggleFollowups() {
@@ -762,7 +781,7 @@ export default function App() {
                 type="button"
                 className="danger"
                 disabled={busy}
-                onClick={() => runAction(() => request('/api/whatsapp/disconnect', { method: 'POST', body: JSON.stringify({ clearSession: true }) }), 'Sessao limpa.')}
+                onClick={clearWhatsAppSession}
               >
                 <Trash2 size={18} />
                 Limpar sessao
