@@ -30,24 +30,34 @@ const DEFAULT_CONVERSATIONS_TABLE = process.env.SUPABASE_CONVERSATIONS_TABLE || 
 const DEFAULT_EVENTS_TABLE = process.env.SUPABASE_EVENTS_TABLE || 'whatsapp_events';
 
 function toConversationRow(conversation) {
+  const lead = {
+    ...(conversation.lead || {}),
+    aiPaused: Boolean(conversation.aiPaused ?? conversation.lead?.aiPaused),
+    aiPausedAt: conversation.aiPausedAt ?? conversation.lead?.aiPausedAt ?? null,
+  };
+
   return {
     contact_name: conversation.contactName || conversation.jid,
     jid: conversation.jid,
-    lead: conversation.lead || {},
+    lead,
     messages: conversation.messages || [],
     updated_at: conversation.updatedAt || new Date().toISOString(),
   };
 }
 
 function fromConversationRow(row) {
+  const lead = row.lead || {
+    status: 'new',
+    route: 'Aguardando',
+    updatedAt: row.updated_at,
+  };
+
   return {
+    aiPaused: Boolean(lead.aiPaused),
+    aiPausedAt: lead.aiPausedAt || null,
     contactName: row.contact_name || row.jid,
     jid: row.jid,
-    lead: row.lead || {
-      status: 'new',
-      route: 'Aguardando',
-      updatedAt: row.updated_at,
-    },
+    lead,
     messages: row.messages || [],
     updatedAt: row.updated_at,
   };
@@ -268,6 +278,47 @@ export class AutomationStore {
     return this.conversations[jid] || null;
   }
 
+  isConversationAiPaused(jid) {
+    const conversation = this.conversations[jid];
+    return Boolean(conversation?.aiPaused ?? conversation?.lead?.aiPaused);
+  }
+
+  async setConversationAiPaused(jid, aiPaused, { contactName } = {}) {
+    const normalizedJid = String(jid || '').trim();
+    if (!normalizedJid) {
+      throw new Error('Conversa inválida.');
+    }
+
+    const now = new Date().toISOString();
+    const paused = Boolean(aiPaused);
+    const existing = this.conversations[normalizedJid] || {
+      jid: normalizedJid,
+      contactName: contactName || normalizedJid,
+      messages: [],
+      lead: {
+        status: 'new',
+        route: 'Aguardando',
+        updatedAt: now,
+      },
+      updatedAt: now,
+    };
+
+    existing.contactName = contactName || existing.contactName || normalizedJid;
+    existing.aiPaused = paused;
+    existing.aiPausedAt = paused ? now : null;
+    existing.lead = {
+      ...(existing.lead || {}),
+      aiPaused: paused,
+      aiPausedAt: existing.aiPausedAt,
+      updatedAt: now,
+    };
+    existing.updatedAt = now;
+    this.conversations[normalizedJid] = existing;
+
+    await this.saveConversations(existing);
+    return existing;
+  }
+
   async addConversationMessage(message) {
     const jid = message.jid;
     const existing = this.conversations[jid] || {
@@ -296,6 +347,13 @@ export class AutomationStore {
       route: 'Aguardando',
       updatedAt: nextMessage.createdAt,
     };
+    existing.aiPaused = Boolean(existing.aiPaused ?? existing.lead.aiPaused);
+    existing.aiPausedAt = existing.aiPaused ? existing.aiPausedAt ?? existing.lead.aiPausedAt ?? null : null;
+    existing.lead = {
+      ...existing.lead,
+      aiPaused: existing.aiPaused,
+      aiPausedAt: existing.aiPausedAt,
+    };
     existing.updatedAt = nextMessage.createdAt;
     existing.messages = [...existing.messages, nextMessage];
     this.conversations[jid] = existing;
@@ -312,8 +370,15 @@ export class AutomationStore {
       updatedAt: new Date().toISOString(),
     };
     const previousLead = existing.lead || {};
+    const aiPaused = Boolean(payload.aiPaused ?? existing.aiPaused ?? previousLead.aiPaused);
+    const aiPausedAt =
+      payload.aiPausedAt === undefined
+        ? existing.aiPausedAt ?? previousLead.aiPausedAt ?? null
+        : payload.aiPausedAt;
     const lead = {
       status: payload.status || previousLead.status || 'new',
+      aiPaused,
+      aiPausedAt: aiPaused ? aiPausedAt : null,
       leadType: payload.leadType ?? previousLead.leadType ?? null,
       route: payload.route || previousLead.route || 'Aguardando',
       reason: payload.reason ?? previousLead.reason ?? null,
@@ -336,6 +401,8 @@ export class AutomationStore {
       previousLead.eventId !== lead.eventId;
 
     existing.contactName = payload.contactName || existing.contactName;
+    existing.aiPaused = aiPaused;
+    existing.aiPausedAt = aiPaused ? aiPausedAt : null;
     existing.lead = lead;
     existing.updatedAt = lead.updatedAt;
     this.conversations[jid] = existing;
@@ -442,6 +509,8 @@ export class AutomationStore {
           appointmentSaved: lead.appointmentSaved ?? null,
           calendarLink: lead.calendarLink || null,
           eventId: lead.eventId || null,
+          aiPaused: Boolean(conversation.aiPaused ?? lead.aiPaused),
+          aiPausedAt: conversation.aiPausedAt ?? lead.aiPausedAt ?? null,
           contactName: conversation.contactName || conversation.jid,
           leadType: lead.leadType || null,
           lastMessage: lastMessage?.text || '',

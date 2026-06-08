@@ -4,6 +4,7 @@ import path from 'node:path';
 import makeWASocket, {
   Browsers,
   DisconnectReason,
+  downloadMediaMessage,
   fetchLatestBaileysVersion,
   useMultiFileAuthState,
 } from '@whiskeysockets/baileys';
@@ -13,16 +14,94 @@ import QRCode from 'qrcode';
 const logger = P({ level: process.env.LOG_LEVEL || 'silent' });
 const RESPOND_TO_GROUPS = process.env.WHATSAPP_RESPOND_TO_GROUPS === 'true';
 const DEFAULT_AUTO_REPLY_DEBOUNCE_MS = 2500;
-const DEFAULT_AUTO_REPLY_DELAY_MS = 200;
+const DEFAULT_AUTO_REPLY_DELAY_MS = 0;
 const configuredDebounceMs = Number(process.env.AUTO_REPLY_DEBOUNCE_MS || DEFAULT_AUTO_REPLY_DEBOUNCE_MS);
 const AUTO_REPLY_DEBOUNCE_MS = Number.isFinite(configuredDebounceMs) ? configuredDebounceMs : DEFAULT_AUTO_REPLY_DEBOUNCE_MS;
+const DEFAULT_OUTBOUND_MIN_DELAY_MS = 5000;
+const DEFAULT_OUTBOUND_MAX_DELAY_MS = 15000;
+const DEFAULT_OUTBOUND_MAX_PER_MINUTE = 12;
+const DEFAULT_OUTBOUND_MAX_PER_CONTACT_HOUR = 8;
+const DEFAULT_OUTBOUND_MIN_GAP_PER_CONTACT_MS = 10000;
+const DEFAULT_OUTBOUND_TYPING_CHARS_PER_SECOND = 38;
+const DEFAULT_OUTBOUND_TYPING_MIN_MS = 5000;
+const DEFAULT_OUTBOUND_TYPING_MAX_MS = 15000;
+const configuredOutboundMinDelayMs = Number(process.env.OUTBOUND_MIN_DELAY_MS || DEFAULT_OUTBOUND_MIN_DELAY_MS);
+const configuredOutboundMaxDelayMs = Number(process.env.OUTBOUND_MAX_DELAY_MS || DEFAULT_OUTBOUND_MAX_DELAY_MS);
+const configuredOutboundMaxPerMinute = Number(process.env.OUTBOUND_MAX_PER_MINUTE || DEFAULT_OUTBOUND_MAX_PER_MINUTE);
+const configuredOutboundMaxPerContactHour = Number(process.env.OUTBOUND_MAX_PER_CONTACT_HOUR || DEFAULT_OUTBOUND_MAX_PER_CONTACT_HOUR);
+const configuredOutboundMinGapPerContactMs = Number(
+  process.env.OUTBOUND_MIN_GAP_PER_CONTACT_MS || DEFAULT_OUTBOUND_MIN_GAP_PER_CONTACT_MS,
+);
+const configuredOutboundTypingCharsPerSecond = Number(
+  process.env.OUTBOUND_TYPING_CHARS_PER_SECOND || DEFAULT_OUTBOUND_TYPING_CHARS_PER_SECOND,
+);
+const configuredOutboundTypingMinMs = Number(process.env.OUTBOUND_TYPING_MIN_MS || DEFAULT_OUTBOUND_TYPING_MIN_MS);
+const configuredOutboundTypingMaxMs = Number(process.env.OUTBOUND_TYPING_MAX_MS || DEFAULT_OUTBOUND_TYPING_MAX_MS);
+const OUTBOUND_MIN_DELAY_MS = Number.isFinite(configuredOutboundMinDelayMs)
+  ? Math.max(0, configuredOutboundMinDelayMs)
+  : DEFAULT_OUTBOUND_MIN_DELAY_MS;
+const OUTBOUND_MAX_DELAY_MS = Number.isFinite(configuredOutboundMaxDelayMs)
+  ? Math.max(OUTBOUND_MIN_DELAY_MS, configuredOutboundMaxDelayMs)
+  : Math.max(OUTBOUND_MIN_DELAY_MS, DEFAULT_OUTBOUND_MAX_DELAY_MS);
+const OUTBOUND_MAX_PER_MINUTE = Number.isFinite(configuredOutboundMaxPerMinute)
+  ? Math.max(0, Math.floor(configuredOutboundMaxPerMinute))
+  : DEFAULT_OUTBOUND_MAX_PER_MINUTE;
+const OUTBOUND_MAX_PER_CONTACT_HOUR = Number.isFinite(configuredOutboundMaxPerContactHour)
+  ? Math.max(0, Math.floor(configuredOutboundMaxPerContactHour))
+  : DEFAULT_OUTBOUND_MAX_PER_CONTACT_HOUR;
+const OUTBOUND_MIN_GAP_PER_CONTACT_MS = Number.isFinite(configuredOutboundMinGapPerContactMs)
+  ? Math.max(0, configuredOutboundMinGapPerContactMs)
+  : DEFAULT_OUTBOUND_MIN_GAP_PER_CONTACT_MS;
+const OUTBOUND_TYPING_CHARS_PER_SECOND = Number.isFinite(configuredOutboundTypingCharsPerSecond)
+  ? Math.max(10, configuredOutboundTypingCharsPerSecond)
+  : DEFAULT_OUTBOUND_TYPING_CHARS_PER_SECOND;
+const OUTBOUND_TYPING_MIN_MS = Number.isFinite(configuredOutboundTypingMinMs)
+  ? Math.max(0, configuredOutboundTypingMinMs)
+  : DEFAULT_OUTBOUND_TYPING_MIN_MS;
+const OUTBOUND_TYPING_MAX_MS = Number.isFinite(configuredOutboundTypingMaxMs)
+  ? Math.max(OUTBOUND_TYPING_MIN_MS, configuredOutboundTypingMaxMs)
+  : Math.max(OUTBOUND_TYPING_MIN_MS, DEFAULT_OUTBOUND_TYPING_MAX_MS);
+const AUDIO_TRANSCRIPTION_ENABLED = process.env.AUDIO_TRANSCRIPTION_ENABLED !== 'false';
+const DEFAULT_AUDIO_MAX_BYTES = 14 * 1024 * 1024;
+const DEFAULT_AUDIO_MAX_SECONDS = 300;
+const configuredAudioMaxBytes = Number(process.env.AUDIO_MAX_BYTES || DEFAULT_AUDIO_MAX_BYTES);
+const configuredAudioMaxSeconds = Number(process.env.AUDIO_MAX_SECONDS || DEFAULT_AUDIO_MAX_SECONDS);
+const configuredAudioTranscriptMaxChars = Number(process.env.AUDIO_TRANSCRIPTION_MAX_CHARS || 2800);
+const AUDIO_MAX_BYTES = Number.isFinite(configuredAudioMaxBytes) ? configuredAudioMaxBytes : DEFAULT_AUDIO_MAX_BYTES;
+const AUDIO_MAX_SECONDS = Number.isFinite(configuredAudioMaxSeconds) ? configuredAudioMaxSeconds : DEFAULT_AUDIO_MAX_SECONDS;
+const AUDIO_TRANSCRIPTION_MAX_CHARS = Number.isFinite(configuredAudioTranscriptMaxChars)
+  ? Math.max(500, configuredAudioTranscriptMaxChars)
+  : 2800;
+const AUDIO_TRANSCRIPTION_FAILURE_REPLY =
+  process.env.AUDIO_TRANSCRIPTION_FAILURE_REPLY ||
+  'Não consegui ouvir esse áudio com segurança. Pode mandar em texto para eu continuar o atendimento?';
+const LEGACY_INITIAL_APPROACH_MESSAGE =
+  'Olá, sou assistente do Wilson Sanches da Cresce Mais. Para te direcionar melhor, esse atendimento é para CPF ou CNPJ?\n\n1. CPF\n2. CNPJ';
+const INITIAL_APPROACH_MESSAGE =
+  'Cresce Mais, Consultoria Financeira!\n' +
+  'Somos especializados em reintegração de crédito para destravar o seu financiamento.\n' +
+  'Atuamos com:\n' +
+  '✅ Limpa nome / renegociação de dívidas\n' +
+  '✅ Rating bancário\n' +
+  '✅ Consulta Bacen\n' +
+  '✅ Devolutiva de cheque\n' +
+  '✅ Cadin\n' +
+  '✅ CPF e CNPJ\n' +
+  'Me conta: o que você precisa resolver hoje?\n' +
+  'Responda com o número:\n' +
+  '1 – Quero uma consulta técnica na plataforma pra entender minha real situação de dívidas (investimento: R$150)\n' +
+  '2 – Só quero entender como funciona\n' +
+  '3 – É urgente 🚨 preciso resolver hoje (me passa seu número que eu te ligo pra alinharmos ☎️)';
+const configuredAutoReplyText = process.env.AUTO_REPLY_TEXT;
+const AUTO_REPLY_TEXT =
+  configuredAutoReplyText && configuredAutoReplyText !== LEGACY_INITIAL_APPROACH_MESSAGE
+    ? configuredAutoReplyText
+    : INITIAL_APPROACH_MESSAGE;
 
 const DEFAULT_AUTO_REPLY = {
   id: 'default-auto-reply',
   name: 'Resposta automática',
-  response:
-    process.env.AUTO_REPLY_TEXT ||
-    'Olá, sou assistente do Wilson Sanches da Cresce Mais. Para te direcionar melhor, esse atendimento é para CPF ou CNPJ?\n\n1. CPF\n2. CNPJ',
+  response: AUTO_REPLY_TEXT,
   active: process.env.AUTO_REPLY_ENABLED !== 'false',
   delayMs: Number(process.env.AUTO_REPLY_DELAY_MS || DEFAULT_AUTO_REPLY_DELAY_MS),
   cooldownSeconds: Number(process.env.AUTO_REPLY_COOLDOWN_SECONDS || 300),
@@ -55,6 +134,41 @@ const WEEKDAY_LABELS = ['domingo', 'segunda-feira', 'terça-feira', 'quarta-feir
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function sleepWithComposing(sock, jid, ms) {
+  const totalMs = Math.max(0, Number(ms) || 0);
+  const startedAt = Date.now();
+  let remainingMs = totalMs;
+
+  await sock.presenceSubscribe?.(jid).catch(() => null);
+  await sock.sendPresenceUpdate('composing', jid).catch(() => null);
+
+  while (remainingMs > 0) {
+    await sleep(Math.min(3500, remainingMs));
+    remainingMs = totalMs - (Date.now() - startedAt);
+
+    if (remainingMs > 0) {
+      await sock.sendPresenceUpdate('composing', jid).catch(() => null);
+    }
+  }
+}
+
+function randomDelay(minMs, maxMs) {
+  const min = Math.max(0, Number(minMs) || 0);
+  const max = Math.max(min, Number(maxMs) || min);
+  return min + Math.floor(Math.random() * (max - min + 1));
+}
+
+function getTypingDelay(text) {
+  const cleanText = String(text || '').replace(/\s+/g, ' ').trim();
+  const estimatedMs = Math.ceil((cleanText.length / OUTBOUND_TYPING_CHARS_PER_SECOND) * 1000);
+  const jitterMs = randomDelay(OUTBOUND_MIN_DELAY_MS, OUTBOUND_MAX_DELAY_MS);
+  return Math.min(OUTBOUND_TYPING_MAX_MS, Math.max(OUTBOUND_TYPING_MIN_MS, estimatedMs + jitterMs));
+}
+
+function pruneWindow(timestamps, cutoff) {
+  return timestamps.filter((timestamp) => timestamp > cutoff);
 }
 
 function getSessionBackupName(reason) {
@@ -134,17 +248,25 @@ function extractEmailFromText(text) {
   return String(text || '').match(/[^\s@]+@[^\s@]+\.[^\s@]+/)?.[0] || null;
 }
 
-function getMessageText(message) {
+function getMessagePayload(message) {
   const payload = message?.message;
   if (!payload) {
-    return '';
+    return null;
   }
 
-  const unwrapped =
+  return (
     payload.ephemeralMessage?.message ||
     payload.viewOnceMessage?.message ||
     payload.viewOnceMessageV2?.message ||
-    payload;
+    payload
+  );
+}
+
+function getMessageText(message) {
+  const unwrapped = getMessagePayload(message);
+  if (!unwrapped) {
+    return '';
+  }
 
   return (
     unwrapped.conversation ||
@@ -156,6 +278,49 @@ function getMessageText(message) {
     unwrapped.listResponseMessage?.title ||
     ''
   );
+}
+
+function getAudioMessage(message) {
+  return getMessagePayload(message)?.audioMessage || null;
+}
+
+function toSafeNumber(value) {
+  if (value === undefined || value === null) {
+    return null;
+  }
+
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null;
+  }
+
+  if (typeof value === 'bigint') {
+    return Number(value);
+  }
+
+  if (typeof value.toNumber === 'function') {
+    try {
+      const numberValue = value.toNumber();
+      return Number.isFinite(numberValue) ? numberValue : null;
+    } catch {
+      return null;
+    }
+  }
+
+  const numberValue = Number(value);
+  return Number.isFinite(numberValue) ? numberValue : null;
+}
+
+function getAudioMimeType(audioMessage) {
+  return String(audioMessage?.mimetype || 'audio/ogg').split(';')[0].trim() || 'audio/ogg';
+}
+
+function truncateTranscriptForFlow(value) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  if (text.length <= AUDIO_TRANSCRIPTION_MAX_CHARS) {
+    return text;
+  }
+
+  return `${text.slice(0, AUDIO_TRANSCRIPTION_MAX_CHARS - 1).trim()}…`;
 }
 
 function getDisconnectCode(lastDisconnect) {
@@ -213,6 +378,12 @@ function getMenuOption(text) {
   return optionIndex >= 0 ? optionIndex + 1 : null;
 }
 
+function getLeadingInitialMenuOption(text) {
+  const normalized = normalizeText(text).replace(/\s+/g, ' ').trim();
+  const match = normalized.match(/^(?:opcao\s*)?([1-3])(?:\s|[.)\-–—])/);
+  return match ? Number(match[1]) : null;
+}
+
 function isSimpleGreeting(text) {
   const normalized = normalizeText(text).replace(/[.!?]+$/g, '').trim();
   return ['oi', 'ola', 'bom dia', 'boa tarde', 'boa noite', 'menu', 'opcoes', 'opcao', 'atendimento', 'quero atendimento'].includes(
@@ -221,7 +392,7 @@ function isSimpleGreeting(text) {
 }
 
 function buildDocumentTypeMessage() {
-  return 'Olá, sou assistente do Wilson Sanches da Cresce Mais. Para te direcionar melhor, esse atendimento é para CPF ou CNPJ?\n\n1. CPF\n2. CNPJ';
+  return INITIAL_APPROACH_MESSAGE;
 }
 
 function buildSegmentMessage() {
@@ -744,6 +915,10 @@ function buildAnalysisDetailsMessage(data) {
   return 'A consulta de negativado verifica restrições em Serasa, SPC, Boa Vista, score e apontamentos que podem impedir crédito. Ela não promete limpeza garantida; identifica o problema para orientar o próximo passo.\n\n1. Quero seguir com a consulta\n2. Enviar outra dúvida em texto\n3. Não quero pagar agora';
 }
 
+function buildHowItWorksMessage() {
+  return 'Funciona assim: fazemos uma consulta técnica para identificar o que está travando seu crédito, como dívidas, restrições, rating bancário, Bacen, cheque ou Cadin. Com esse diagnóstico, orientamos o próximo passo com segurança.\n\n1. Quero seguir com a consulta de R$150\n2. Tenho outra dúvida\n3. Não quero seguir agora';
+}
+
 function buildAskForQuestionMessage() {
   return 'Claro. Me envie sua dúvida em uma frase que eu respondo sem sair do fluxo.\n\n1. Quero seguir com a consulta\n3. Não quero pagar agora';
 }
@@ -889,6 +1064,9 @@ export class WhatsAppClient extends EventEmitter {
     this.reconnectTimer = null;
     this.cooldowns = new Map();
     this.defaultReply = DEFAULT_AUTO_REPLY;
+    this.outboundHistory = [];
+    this.outboundHistoryByJid = new Map();
+    this.outboundLastSentAtByJid = new Map();
     this.pendingReplies = new Map();
     this.scheduling = new Map();
   }
@@ -1007,6 +1185,19 @@ export class WhatsAppClient extends EventEmitter {
     return persisted || null;
   }
 
+  isConversationAiPaused(jid) {
+    return Boolean(this.store?.isConversationAiPaused?.(jid));
+  }
+
+  cancelPendingReply(jid) {
+    const pending = this.pendingReplies.get(jid);
+    if (pending?.timer) {
+      clearTimeout(pending.timer);
+    }
+
+    this.pendingReplies.delete(jid);
+  }
+
   async setSchedulingState(jid, state, { contactName } = {}) {
     if (!jid || !state) {
       return null;
@@ -1082,6 +1273,69 @@ export class WhatsAppClient extends EventEmitter {
     }
 
     return result;
+  }
+
+  async prepareOutbound(jid, { bypassLimits = false, contactName, source = 'message' } = {}) {
+    if (bypassLimits) {
+      return { ok: true };
+    }
+
+    const now = Date.now();
+    this.outboundHistory = pruneWindow(this.outboundHistory, now - 60_000);
+
+    if (OUTBOUND_MAX_PER_MINUTE > 0 && this.outboundHistory.length >= OUTBOUND_MAX_PER_MINUTE) {
+      this.emitActivity('message', 'Envio automático pausado por limite global de mensagens por minuto.', {
+        jid,
+        limit: OUTBOUND_MAX_PER_MINUTE,
+        source,
+      });
+      await this.recordEvent('outbound_blocked', {
+        jid,
+        contactName,
+        meta: {
+          limit: OUTBOUND_MAX_PER_MINUTE,
+          reason: 'global_rate_limit',
+          source,
+        },
+      });
+      return { ok: false, reason: 'global_rate_limit' };
+    }
+
+    const contactHistory = pruneWindow(this.outboundHistoryByJid.get(jid) || [], now - 60 * 60_000);
+    this.outboundHistoryByJid.set(jid, contactHistory);
+
+    if (OUTBOUND_MAX_PER_CONTACT_HOUR > 0 && contactHistory.length >= OUTBOUND_MAX_PER_CONTACT_HOUR) {
+      this.emitActivity('message', 'Envio automático pausado por limite de mensagens para este contato.', {
+        jid,
+        limit: OUTBOUND_MAX_PER_CONTACT_HOUR,
+        source,
+      });
+      await this.recordEvent('outbound_blocked', {
+        jid,
+        contactName,
+        meta: {
+          limit: OUTBOUND_MAX_PER_CONTACT_HOUR,
+          reason: 'contact_rate_limit',
+          source,
+        },
+      });
+      return { ok: false, reason: 'contact_rate_limit' };
+    }
+
+    const lastSentAt = this.outboundLastSentAtByJid.get(jid) || 0;
+    const waitMs = OUTBOUND_MIN_GAP_PER_CONTACT_MS - (now - lastSentAt);
+    if (waitMs > 0) {
+      await sleep(waitMs);
+    }
+
+    return { ok: true };
+  }
+
+  noteOutboundSent(jid) {
+    const now = Date.now();
+    this.outboundHistory = pruneWindow([...this.outboundHistory, now], now - 60_000);
+    this.outboundHistoryByJid.set(jid, pruneWindow([...(this.outboundHistoryByJid.get(jid) || []), now], now - 60 * 60_000));
+    this.outboundLastSentAtByJid.set(jid, now);
   }
 
   async connect() {
@@ -1185,6 +1439,65 @@ export class WhatsAppClient extends EventEmitter {
     }
   }
 
+  async transcribeIncomingAudio(message, audioMessage, { contactName, jid } = {}) {
+    if (!AUDIO_TRANSCRIPTION_ENABLED) {
+      throw new Error('Transcrição de áudio desativada.');
+    }
+
+    if (!this.gemini?.isReady) {
+      throw new Error('Gemini não configurado para transcrever áudio.');
+    }
+
+    const seconds = toSafeNumber(audioMessage?.seconds);
+    if (seconds && AUDIO_MAX_SECONDS > 0 && seconds > AUDIO_MAX_SECONDS) {
+      throw new Error(`Áudio maior que o limite de ${AUDIO_MAX_SECONDS} segundos.`);
+    }
+
+    const declaredBytes = toSafeNumber(audioMessage?.fileLength);
+    if (declaredBytes && AUDIO_MAX_BYTES > 0 && declaredBytes > AUDIO_MAX_BYTES) {
+      throw new Error(`Áudio maior que o limite de ${AUDIO_MAX_BYTES} bytes.`);
+    }
+
+    const downloadContext = { logger };
+    if (this.sock?.updateMediaMessage) {
+      downloadContext.reuploadRequest = (mediaMessage) => this.sock.updateMediaMessage(mediaMessage);
+    }
+
+    const downloaded = await downloadMediaMessage(message, 'buffer', {}, downloadContext);
+    const audioBuffer = Buffer.isBuffer(downloaded) ? downloaded : Buffer.from(downloaded || []);
+
+    if (AUDIO_MAX_BYTES > 0 && audioBuffer.length > AUDIO_MAX_BYTES) {
+      throw new Error(`Áudio baixado maior que o limite de ${AUDIO_MAX_BYTES} bytes.`);
+    }
+
+    const mimeType = getAudioMimeType(audioMessage);
+    const transcript = truncateTranscriptForFlow(
+      await this.gemini.transcribeAudio({
+        audioBuffer,
+        contactName,
+        mimeType,
+      }),
+    );
+
+    if (!transcript) {
+      throw new Error('Transcrição vazia.');
+    }
+
+    this.emitActivity('audio', `Áudio transcrito de ${contactName || jid}.`, {
+      bytes: audioBuffer.length,
+      jid,
+      mimeType,
+      seconds,
+    });
+
+    return {
+      bytes: audioBuffer.length,
+      mimeType,
+      seconds,
+      text: transcript,
+    };
+  }
+
   async handleMessages(event) {
     if (!Array.isArray(event.messages)) {
       return;
@@ -1197,10 +1510,34 @@ export class WhatsAppClient extends EventEmitter {
       }
 
       const isGroup = jid.endsWith('@g.us');
-      const text = getMessageText(message).trim();
+      let text = getMessageText(message).trim();
+      let conversationText = text;
+      let shouldSendAudioFallback = false;
+      const audioMessage = getAudioMessage(message);
       const contactName = message.pushName || jid.replace('@s.whatsapp.net', '');
+      const aiPaused = this.isConversationAiPaused(jid);
 
-      if (!text) {
+      if (!text && audioMessage) {
+        conversationText = '[Áudio recebido]';
+
+        if (!aiPaused && (!isGroup || RESPOND_TO_GROUPS)) {
+          try {
+            const transcription = await this.transcribeIncomingAudio(message, audioMessage, { contactName, jid });
+            text = transcription.text;
+            conversationText = `[Áudio transcrito] ${text}`;
+          } catch (error) {
+            conversationText = `[Áudio recebido: transcrição indisponível] ${error.message}`;
+            shouldSendAudioFallback = true;
+            this.emitActivity('error', 'Falha ao transcrever áudio do WhatsApp.', {
+              error: error.message,
+              jid,
+              mimeType: getAudioMimeType(audioMessage),
+            });
+          }
+        }
+      }
+
+      if (!conversationText) {
         continue;
       }
 
@@ -1208,14 +1545,14 @@ export class WhatsAppClient extends EventEmitter {
         jid,
         contactName,
         direction: 'in',
-        text,
+        text: conversationText,
         id: message.key?.id,
       });
 
       const incoming = {
         jid,
         contactName,
-        text,
+        text: conversationText,
         isGroup,
         createdAt: new Date().toISOString(),
       };
@@ -1228,11 +1565,42 @@ export class WhatsAppClient extends EventEmitter {
         continue;
       }
 
+      if (aiPaused) {
+        this.cancelPendingReply(jid);
+        this.emitActivity('message', `IA pausada para ${contactName}. Atendimento manual aguardando resposta.`, { jid });
+        continue;
+      }
+
+      if (shouldSendAudioFallback) {
+        await this.replyWithAutomation(
+          jid,
+          message,
+          {
+            ...this.defaultReply,
+            delayMs: 500,
+            name: 'Áudio',
+            response: AUDIO_TRANSCRIPTION_FAILURE_REPLY,
+          },
+          contactName,
+        );
+        continue;
+      }
+
+      if (!text) {
+        continue;
+      }
+
       this.queueAutoReply({ contactName, isGroup, jid, message, text });
     }
   }
 
   queueAutoReply({ contactName, isGroup, jid, message, text }) {
+    if (this.isConversationAiPaused(jid)) {
+      this.cancelPendingReply(jid);
+      this.emitActivity('message', `IA pausada para ${contactName}. Resposta automática não enviada.`, { jid });
+      return;
+    }
+
     const current = this.pendingReplies.get(jid);
     if (current?.timer) {
       clearTimeout(current.timer);
@@ -1271,6 +1639,11 @@ export class WhatsAppClient extends EventEmitter {
       return;
     }
 
+    if (this.isConversationAiPaused(jid)) {
+      this.cancelPendingReply(jid);
+      return;
+    }
+
     const batch = pending.messages;
     const lastMessage = batch[batch.length - 1];
 
@@ -1285,7 +1658,7 @@ export class WhatsAppClient extends EventEmitter {
       const text = batch.map((item) => item.text).join('\n').trim();
       const automation = await this.createReply(text, lastMessage.isGroup, jid, lastMessage.contactName);
 
-      if (automation) {
+      if (automation && !this.isConversationAiPaused(jid)) {
         await this.replyWithAutomation(jid, lastMessage.message, automation, lastMessage.contactName);
       }
     } finally {
@@ -1595,6 +1968,64 @@ export class WhatsAppClient extends EventEmitter {
     }
   }
 
+  async createUrgentPhoneReply({ contactName, current, jid, text }) {
+    const data = normalizeSchedulePhone(
+      mergeScheduleData(current?.data, {
+        analysisAccepted: true,
+        leadConfidence: 0.8,
+        leadType: 'low_ticket',
+        meetingChannel: 'phone',
+        notes: 'Cliente escolheu atendimento urgente para resolver hoje.',
+        paymentAmount: 150,
+        phoneCallAccepted: true,
+        title: 'Consulta técnica urgente Cresce Mais',
+      }),
+      { jid, text },
+    );
+
+    if (!data.contactPhone) {
+      await this.setSchedulingState(
+        jid,
+        {
+          data,
+          status: 'awaiting_urgent_phone',
+          updatedAt: new Date().toISOString(),
+        },
+        { contactName },
+      );
+
+      return {
+        ...this.defaultReply,
+        name: 'Qualificação',
+        response: 'Perfeito. Me passa seu número com DDD que eu te ligo para alinharmos hoje.',
+      };
+    }
+
+    await this.recordLeadStatus({
+      contactName,
+      jid,
+      leadType: 'low_ticket',
+      reason: 'Cliente pediu atendimento urgente por ligação.',
+      status: 'low_ticket',
+    });
+    await this.setSchedulingState(
+      jid,
+      {
+        data,
+        status: 'manual_followup',
+        updatedAt: new Date().toISOString(),
+      },
+      { contactName },
+    );
+    await this.store?.setConversationAiPaused?.(jid, true, { contactName });
+
+    return {
+      ...this.defaultReply,
+      name: 'Atendimento manual',
+      response: `Perfeito, recebi seu número ${data.contactPhone}. Vou encaminhar para o atendimento humano te chamar hoje.`,
+    };
+  }
+
   async createSchedulingReply({ contactName, history = null, isGroup, jid, text }) {
     if (isGroup) {
       return null;
@@ -1604,6 +2035,7 @@ export class WhatsAppClient extends EventEmitter {
     const emailFromText = extractEmailFromText(text);
     const phoneCallPreference = getPhoneCallPreference(text, jid);
     const menuOption = getMenuOption(text);
+    const initialMenuOption = menuOption || getLeadingInitialMenuOption(text);
 
     if (!current && isSimpleGreeting(text)) {
       const data = {};
@@ -1620,7 +2052,7 @@ export class WhatsAppClient extends EventEmitter {
       };
     }
 
-    if (!current && (menuOption || isCpfDocumentTypeText(text) || isCnpjDocumentTypeText(text))) {
+    if (!current && (initialMenuOption || isCpfDocumentTypeText(text) || isCnpjDocumentTypeText(text))) {
       current = {
         data: {},
         status: 'awaiting_document_type',
@@ -1643,7 +2075,61 @@ export class WhatsAppClient extends EventEmitter {
     }
 
     if (current?.status === 'awaiting_document_type') {
-      if (menuOption === 1 || isCpfDocumentTypeText(text)) {
+      if (initialMenuOption === 1) {
+        const data = mergeScheduleData(current.data, {
+          analysisAccepted: true,
+          documentType: current.data?.documentType || 'cpf',
+          leadConfidence: 1,
+          leadType: 'low_ticket',
+          notes: 'Cliente escolheu consulta técnica de R$150 no menu inicial.',
+          paymentAmount: 150,
+          segment: current.data?.segment || 'person',
+        });
+
+        return this.createPaymentAcceptedReply({
+          contactName,
+          current: {
+            ...current,
+            data,
+          },
+          jid,
+          text,
+        });
+      }
+
+      if (initialMenuOption === 2) {
+        const data = mergeScheduleData(current.data, {
+          analysisAccepted: false,
+          documentType: current.data?.documentType || 'cpf',
+          leadConfidence: 0.7,
+          leadType: 'low_ticket',
+          menu: 'analysis_details',
+          paymentAmount: 150,
+          segment: current.data?.segment || 'person',
+        });
+
+        await this.setSchedulingState(
+          jid,
+          {
+            data,
+            status: 'awaiting_payment_confirmation',
+            updatedAt: new Date().toISOString(),
+          },
+          { contactName },
+        );
+
+        return {
+          ...this.defaultReply,
+          name: 'Qualificação',
+          response: buildHowItWorksMessage(),
+        };
+      }
+
+      if (initialMenuOption === 3) {
+        return this.createUrgentPhoneReply({ contactName, current, jid, text });
+      }
+
+      if (isCpfDocumentTypeText(text)) {
         const data = {
           ...current.data,
           documentType: 'cpf',
@@ -1663,7 +2149,7 @@ export class WhatsAppClient extends EventEmitter {
         };
       }
 
-      if (menuOption === 2 || isCnpjDocumentTypeText(text)) {
+      if (isCnpjDocumentTypeText(text)) {
         const baseData = {
           ...current.data,
           documentType: 'cnpj',
@@ -1708,6 +2194,14 @@ export class WhatsAppClient extends EventEmitter {
       }
 
       return this.createStateFallbackReply({ current });
+    }
+
+    if (current?.status === 'awaiting_urgent_phone') {
+      return this.createUrgentPhoneReply({ contactName, current, jid, text });
+    }
+
+    if (current?.status === 'manual_followup') {
+      return null;
     }
 
     if (current?.status === 'awaiting_segment') {
@@ -2549,9 +3043,23 @@ export class WhatsAppClient extends EventEmitter {
     return null;
   }
 
-  async replyWithAutomation(jid, quotedMessage, automation, contactName) {
+  async replyWithAutomation(jid, quotedMessage, automation, contactName, options = {}) {
     if (!this.sock) {
       return;
+    }
+
+    const outbound = await this.prepareOutbound(jid, {
+      bypassLimits: options.bypassLimits,
+      contactName,
+      source: automation.name || 'automation',
+    });
+    if (!outbound.ok) {
+      return {
+        jid,
+        reason: outbound.reason,
+        skipped: true,
+        text: automation.response,
+      };
     }
 
     const delayMs = Math.max(0, Number(automation.delayMs || 0));
@@ -2559,10 +3067,14 @@ export class WhatsAppClient extends EventEmitter {
       await sleep(delayMs);
     }
 
-    await this.sock.sendPresenceUpdate('composing', jid).catch(() => null);
-    await sleep(Math.min(900, Math.max(300, delayMs)));
+    await sleepWithComposing(
+      this.sock,
+      jid,
+      options.skipTypingDelay ? Math.min(900, Math.max(300, delayMs)) : getTypingDelay(automation.response),
+    );
     await this.sock.sendMessage(jid, { text: automation.response }, { quoted: quotedMessage });
     await this.sock.sendPresenceUpdate('paused', jid).catch(() => null);
+    this.noteOutboundSent(jid);
 
     const createdAt = new Date().toISOString();
     await this.store.addConversationMessage({
@@ -2602,7 +3114,15 @@ export class WhatsAppClient extends EventEmitter {
       throw new Error('Informe uma mensagem.');
     }
 
+    const outbound = await this.prepareOutbound(jid, { contactName: phone, source: 'manual_send' });
+    if (!outbound.ok) {
+      throw new Error('Envio bloqueado pelos limites de segurança.');
+    }
+
+    await sleepWithComposing(this.sock, jid, getTypingDelay(cleanText));
     await this.sock.sendMessage(jid, { text: cleanText });
+    await this.sock.sendPresenceUpdate('paused', jid).catch(() => null);
+    this.noteOutboundSent(jid);
     const createdAt = new Date().toISOString();
     await this.store.addConversationMessage({
       jid,
@@ -2624,7 +3144,7 @@ export class WhatsAppClient extends EventEmitter {
     return { jid, text: cleanText, createdAt };
   }
 
-  async sendTextToJid(jid, text, { automationName = null, contactName = jid } = {}) {
+  async sendTextToJid(jid, text, { automationName = null, contactName = jid, bypassLimits = false } = {}) {
     if (!this.sock || this.status !== 'connected') {
       throw new Error('WhatsApp ainda não está conectado.');
     }
@@ -2634,7 +3154,24 @@ export class WhatsAppClient extends EventEmitter {
       throw new Error('Informe JID e mensagem.');
     }
 
+    const outbound = await this.prepareOutbound(jid, {
+      bypassLimits,
+      contactName,
+      source: automationName || 'message',
+    });
+    if (!outbound.ok) {
+      return {
+        jid,
+        reason: outbound.reason,
+        skipped: true,
+        text: cleanText,
+      };
+    }
+
+    await sleepWithComposing(this.sock, jid, getTypingDelay(cleanText));
     await this.sock.sendMessage(jid, { text: cleanText });
+    await this.sock.sendPresenceUpdate('paused', jid).catch(() => null);
+    this.noteOutboundSent(jid);
     const createdAt = new Date().toISOString();
     await this.store.addConversationMessage({
       jid,

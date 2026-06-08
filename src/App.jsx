@@ -11,7 +11,9 @@ import {
   ChevronRight,
   Clock3,
   MessageCircle,
+  PauseCircle,
   PieChart,
+  PlayCircle,
   Power,
   QrCode,
   RefreshCcw,
@@ -301,6 +303,10 @@ function getLeadTag(lead) {
   return 'neutral';
 }
 
+function isAiPausedForConversation(conversation, lead) {
+  return Boolean(conversation?.aiPaused ?? conversation?.lead?.aiPaused ?? lead?.aiPaused);
+}
+
 function getAppointmentRoute(appointment) {
   if (appointment.leadType === 'high_ticket') {
     return 'Wilson';
@@ -392,6 +398,7 @@ export default function App() {
   }, [agendaDays, appointmentsByDay]);
   const selectedConversation = selectedClientJid ? conversations[selectedClientJid] : null;
   const selectedMessages = selectedConversation?.messages || [];
+  const selectedAiPaused = isAiPausedForConversation(selectedConversation, selectedLead);
 
   const recentActivity = useMemo(() => {
     return activity.slice(0, 4);
@@ -527,6 +534,21 @@ export default function App() {
     }, leadType === 'high_ticket' ? 'Agenda Wilson desconectada.' : 'Agenda Andre desconectada.');
   }
 
+  async function toggleSelectedConversationAi() {
+    if (!selectedLead?.jid) {
+      return;
+    }
+
+    const aiPaused = !selectedAiPaused;
+    await runAction(async () => {
+      const payload = await request(`/api/conversations/${encodeURIComponent(selectedLead.jid)}/ai`, {
+        method: 'PATCH',
+        body: JSON.stringify({ aiPaused }),
+      });
+      setConversations((current) => ({ ...current, [payload.jid]: payload }));
+    }, aiPaused ? 'IA pausada nesta conversa.' : 'IA retomada nesta conversa.');
+  }
+
   function renderOverview() {
     return (
       <>
@@ -614,8 +636,8 @@ export default function App() {
                     <p>{lead.lastMessage || 'Sem mensagens recentes.'}</p>
                   </div>
                   <div className="client-route">
-                    <Tag type={getLeadTag(lead)}>{getLeadLabel(lead)}</Tag>
-                    <small>{lead.route}</small>
+                    <Tag type={lead.aiPaused ? 'manual' : getLeadTag(lead)}>{lead.aiPaused ? 'Manual' : getLeadLabel(lead)}</Tag>
+                    <small>{lead.aiPaused ? 'IA pausada' : lead.route}</small>
                   </div>
                 </button>
               ))
@@ -633,8 +655,21 @@ export default function App() {
                     <span>{selectedLead.phone || selectedLead.jid}</span>
                   </div>
                   <div className="conversation-status">
-                    <Tag type={getLeadTag(selectedLead)}>{getLeadLabel(selectedLead)}</Tag>
-                    <small>{selectedMessages.length} mensagens</small>
+                    <div className="conversation-tags">
+                      <Tag type={getLeadTag(selectedLead)}>{getLeadLabel(selectedLead)}</Tag>
+                      {selectedAiPaused ? <Tag type="manual">Manual</Tag> : null}
+                    </div>
+                    <small>{selectedAiPaused ? 'IA pausada' : `${selectedMessages.length} mensagens`}</small>
+                    <button
+                      type="button"
+                      className={`manual-toggle ${selectedAiPaused ? 'active' : ''}`}
+                      disabled={busy}
+                      onClick={toggleSelectedConversationAi}
+                      title={selectedAiPaused ? 'Retomar IA nesta conversa' : 'Assumir atendimento manual'}
+                    >
+                      {selectedAiPaused ? <PlayCircle size={16} /> : <PauseCircle size={16} />}
+                      <span>{selectedAiPaused ? 'Retomar IA' : 'Assumir'}</span>
+                    </button>
                   </div>
                 </div>
 

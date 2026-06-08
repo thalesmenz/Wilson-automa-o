@@ -3,10 +3,10 @@ const GEMINI_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta';
 const DEFAULT_SYSTEM_PROMPT = `
 Você é um assistente de atendimento do Wilson Sanches no WhatsApp.
 Atue de forma formal, direta e profissional, sempre em português do Brasil.
-Você se apresenta como assistente do Wilson Sanches da Cresce Mais.
-O atendimento Wilson Sanches trabalha com Limpa Nome. Existem dois cenários: nome negativado/restrito em Serasa, SPC, Boa Vista ou score afetado por restrição; e rating bancário baixo, quando a pessoa não está negativada nesses órgãos mas não consegue financiar, aprovar crédito, limite ou linha de crédito.
-A primeira pergunta obrigatória é se o atendimento é para CPF ou CNPJ. Se for CPF, siga direto para a qualificação normal do problema. Se for CNPJ, pergunte a área de atuação; se for agro, direcione para atendimento preferencial por ligação com horário marcado.
-No primeiro contato, apresente-se como assistente do Wilson Sanches antes de perguntar se é CPF ou CNPJ.
+Você se apresenta como Cresce Mais, Consultoria Financeira.
+O atendimento Wilson Sanches trabalha com reintegração de crédito para destravar financiamento, incluindo limpa nome/renegociação de dívidas, rating bancário, Consulta Bacen, devolutiva de cheque, Cadin, CPF e CNPJ.
+No primeiro contato, use a abordagem inicial do funil: pergunte o que a pessoa precisa resolver hoje e ofereça as opções 1 consulta técnica de R$150, 2 entender como funciona, 3 urgência para ligação.
+Se a pessoa informar CNPJ espontaneamente, pergunte a área de atuação; se for agro, direcione para atendimento preferencial por ligação com horário marcado.
 Explique que a primeira etapa obrigatória é uma consulta para identificar exatamente qual problema está impedindo o crédito.
 Não prometa garantia absoluta, prazo fechado, aprovação de crédito, financiamento ou limpeza total antes da consulta.
 Não invente documentos, políticas ou etapas. Se faltar informação, pergunte se o caso é negativação ou rating bancário baixo e confirme se a pessoa deseja seguir com a consulta.
@@ -38,6 +38,27 @@ function isCompleteSentence(value) {
   return /[.!?]$/.test(String(value || '').trim());
 }
 
+function normalizeAudioMimeType(value) {
+  const mimeType = String(value || 'audio/ogg').split(';')[0].trim().toLowerCase();
+  const aliases = {
+    'audio/mpeg': 'audio/mp3',
+    'audio/mp4': 'audio/aac',
+    'audio/opus': 'audio/ogg',
+    'audio/x-m4a': 'audio/aac',
+  };
+
+  return aliases[mimeType] || mimeType || 'audio/ogg';
+}
+
+function normalizeTranscript(value) {
+  const text = cleanText(value)
+    .replace(/^["“”']|["“”']$/g, '')
+    .replace(/^transcri[cç][aã]o\s*:\s*/i, '')
+    .trim();
+
+  return text;
+}
+
 function formatHistoryForPrompt(history = []) {
   const lines = history
     .slice(-14)
@@ -53,6 +74,7 @@ function formatHistoryForPrompt(history = []) {
 
 export class GeminiClient {
   constructor({
+    audioModel = process.env.GEMINI_AUDIO_MODEL,
     apiKey = process.env.GEMINI_API_KEY,
     model = process.env.GEMINI_MODEL || 'gemini-2.5-flash',
     enabled = process.env.GEMINI_ENABLED !== 'false',
@@ -60,6 +82,7 @@ export class GeminiClient {
   } = {}) {
     this.apiKey = apiKey;
     this.model = String(model || 'gemini-2.5-flash').replace(/^models\//, '');
+    this.audioModel = String(audioModel || this.model).replace(/^models\//, '');
     this.enabled = enabled;
     this.systemPrompt = systemPrompt;
   }
@@ -71,6 +94,7 @@ export class GeminiClient {
   getStatus() {
     return {
       enabled: this.isReady,
+      audioModel: this.audioModel,
       model: this.model,
       provider: 'Gemini',
     };
@@ -134,7 +158,7 @@ export class GeminiClient {
 
     let result = await requestReply({
       instruction:
-        'Responda pelo Gemini em no máximo 320 caracteres, com até 3 frases completas. Termine sempre com ponto ou pergunta. Não fuja do fluxo pré-estabelecido: interprete a mensagem e conduza para a próxima etapa prevista, sem criar etapas, promessas ou alternativas fora do funil. Se for primeiro contato, apresente-se como assistente do Wilson Sanches da Cresce Mais e pergunte se o atendimento é para CPF ou CNPJ com opções numeradas: 1 CPF, 2 CNPJ.',
+        'Responda pelo Gemini em no máximo 320 caracteres, com até 3 frases completas. Termine sempre com ponto ou pergunta. Não fuja do fluxo pré-estabelecido: interprete a mensagem e conduza para a próxima etapa prevista, sem criar etapas, promessas ou alternativas fora do funil. Se for primeiro contato, apresente a Cresce Mais Consultoria Financeira e ofereça as opções: 1 consulta técnica R$150, 2 entender como funciona, 3 urgência por ligação.',
     });
 
     if (!result.reply) {
@@ -230,6 +254,70 @@ Responda em português do Brasil, com no máximo 360 caracteres, de forma direta
     return reply;
   }
 
+  async transcribeAudio({ audioBuffer, contactName, mimeType = 'audio/ogg' }) {
+    if (!this.isReady) {
+      throw new Error('Gemini não configurado.');
+    }
+
+    const buffer = Buffer.isBuffer(audioBuffer) ? audioBuffer : Buffer.from(audioBuffer || []);
+    if (!buffer.length) {
+      throw new Error('Áudio vazio.');
+    }
+
+    const url = `${GEMINI_ENDPOINT}/models/${this.audioModel}:generateContent`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': this.apiKey,
+      },
+      body: JSON.stringify({
+        system_instruction: {
+          parts: [
+            {
+              text:
+                'Você transcreve áudios recebidos pelo WhatsApp para português do Brasil. Retorne somente o texto falado, sem comentários, sem markdown e sem inventar trechos inaudíveis.',
+            },
+          ],
+        },
+        contents: [
+          {
+            parts: [
+              {
+                text: `Cliente: ${contactName || 'Contato do WhatsApp'}\nTranscreva fielmente a fala deste áudio. Se não houver fala humana audível, responda exatamente: SEM_FALA_AUDIVEL.`,
+              },
+              {
+                inlineData: {
+                  data: buffer.toString('base64'),
+                  mimeType: normalizeAudioMimeType(mimeType),
+                },
+              },
+            ],
+          },
+        ],
+        generationConfig: {
+          temperature: 0,
+          topP: 0.8,
+          maxOutputTokens: 1024,
+        },
+      }),
+    });
+
+    const payload = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      const message = payload?.error?.message || `Gemini retornou HTTP ${response.status}.`;
+      throw new Error(message);
+    }
+
+    const transcript = normalizeTranscript(extractGeminiText(payload));
+    if (!transcript || normalizeTranscript(transcript).toUpperCase() === 'SEM_FALA_AUDIVEL') {
+      throw new Error('Não encontrei fala audível no áudio.');
+    }
+
+    return transcript;
+  }
+
   async analyzeScheduling({ contactName, existing = {}, history = [], nowIso, text, timeZone }) {
     if (!this.isReady) {
       throw new Error('Gemini não configurado.');
@@ -251,7 +339,7 @@ Nunca pergunte área de atuação antes de saber se é CPF ou CNPJ. Área de atu
 O campo existing.conversationStatus indica a etapa atual do funil. Quando ele existir, nunca reinicie o atendimento: preserve os dados existentes e avance somente a partir dessa etapa.
 Use existing.availableSlotOptions para entender respostas como "o primeiro", "12h", "pode ser o das 13" ou "a segunda opção".
 Regras por etapa:
-- awaiting_document_type: identifique se o atendimento é para CPF ou CNPJ. Se for CPF, siga para qualificação do problema. Se for CNPJ, peça a área de atuação antes de qualificar; se o cliente já informou CNPJ e agro, pode seguir para atendimento preferencial por ligação.
+- awaiting_document_type: esta é a abordagem inicial. Opção 1 significa consulta técnica de R$150 e aceite para avançar; opção 2 significa explicar como funciona; opção 3 significa urgência por ligação e deve coletar telefone. Se o cliente informar CPF ou CNPJ em texto, use essa informação; se for CNPJ, peça a área de atuação antes de qualificar; se o cliente já informou CNPJ e agro, pode seguir para atendimento preferencial por ligação.
 - awaiting_segment: se o cliente disser que é agro, retorne schedule_meeting com atendimento preferencial por ligação; se ele responder o problema em vez do segmento, classifique leadType e use qualify para seguir sem repetir a abertura.
 - awaiting_qualification: interprete texto livre sobre negativação, Serasa/SPC/Boa Vista, rating baixo, crédito, limite ou financiamento e classifique o leadType correspondente.
 - awaiting_payment_confirmation: frases como "quero pagar", "manda o pix", "como pago", "pode seguir" aceitam a consulta; recusa, preço caro ou grátis descartam; dúvidas pedem mais explicação.

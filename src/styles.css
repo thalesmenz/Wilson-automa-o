@@ -532,6 +532,40 @@ button:disabled {
   justify-items: end;
 }
 
+.conversation-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.manual-toggle {
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid #d5e0e4;
+  border-radius: 8px;
+  color: #25312c;
+  display: inline-flex;
+  font-size: 12px;
+  font-weight: 900;
+  gap: 6px;
+  min-height: 34px;
+  padding: 7px 10px;
+}
+
+.manual-toggle:hover:not(:disabled) {
+  background: #f8fbfa;
+  border-color: #126e5c;
+  box-shadow: none;
+  transform: none;
+}
+
+.manual-toggle.active {
+  background: #fff6e7;
+  border-color: #e0ae45;
+  color: #8a5c09;
+}
+
 .conversation-messages {
   align-content: start;
   display: grid;
@@ -700,6 +734,11 @@ button:disabled {
 .tag.neutral {
   background: #f3f6f8;
   color: #5c6b74;
+}
+
+.tag.manual {
+  background: #fff2d8;
+  color: #86580b;
 }
 
 .connection-list {
@@ -1347,6 +1386,10 @@ button:disabled {
 
   .conversation-status {
     justify-items: start;
+  }
+
+  .conversation-tags {
+    justify-content: flex-start;
   }
 
   .message-bubble {

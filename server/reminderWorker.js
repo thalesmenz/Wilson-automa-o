@@ -86,10 +86,15 @@ export class ReminderWorker {
       for (const reminder of dueReminders) {
         try {
           const message = buildReminderMessage(reminder.appointment, reminder.type, this.timeZone);
-          await this.whatsapp.sendTextToJid(reminder.appointment.jid, message, {
+          const result = await this.whatsapp.sendTextToJid(reminder.appointment.jid, message, {
             contactName: reminder.appointment.contactName,
             automationName: reminder.type === 'day' ? 'Follow-up do dia' : 'Follow-up 30 minutos',
           });
+
+          if (result?.skipped) {
+            throw new Error(`Envio bloqueado pelos limites de segurança: ${result.reason}`);
+          }
+
           await this.appointmentStore.markReminderSent(reminder.appointment.id, reminder.type);
           await this.whatsapp.recordEvent?.('followup_sent', {
             jid: reminder.appointment.jid,

@@ -36,17 +36,64 @@ Crie um `.env` com:
 ```bash
 GEMINI_API_KEY=sua_chave_aqui
 GEMINI_MODEL=gemini-2.5-flash
+GEMINI_AUDIO_MODEL=gemini-2.5-flash
 AUTO_REPLY_DEBOUNCE_MS=2500
-AUTO_REPLY_DELAY_MS=200
+AUTO_REPLY_DELAY_MS=0
 ```
 
-Sem chave do Gemini, o bot usa o fallback:
+Sem chave do Gemini, o bot usa a abordagem inicial:
 
 ```txt
-Ola! Recebemos sua mensagem. Ja vamos te responder.
+Cresce Mais, Consultoria Financeira!
+Somos especializados em reintegracao de credito para destravar o seu financiamento.
+Atuamos com:
+- Limpa nome / renegociacao de dividas
+- Rating bancario
+- Consulta Bacen
+- Devolutiva de cheque
+- Cadin
+- CPF e CNPJ
+Me conta: o que voce precisa resolver hoje?
+Responda com o numero:
+1 - Quero uma consulta tecnica na plataforma pra entender minha real situacao de dividas (investimento: R$150)
+2 - So quero entender como funciona
+3 - E urgente, preciso resolver hoje (me passa seu numero que eu te ligo pra alinharmos)
 ```
 
 Para trocar o fallback, ajuste `AUTO_REPLY_TEXT`. A personalidade e as regras comerciais da IA ficam versionadas no codigo em [server/geminiClient.js](/Users/thalesmenzner/Documents/contabsquad/server/geminiClient.js).
+
+No painel de `Clientes`, use `Assumir` para pausar a IA em uma conversa especifica. Enquanto estiver em modo manual, novas mensagens continuam sendo salvas no historico, mas nenhuma resposta automatica e enviada para aquele contato. Use `Retomar IA` para ligar o atendimento automatico novamente.
+
+### Reducao de risco operacional
+
+O bot usa pausas e indicador de digitacao antes de enviar mensagens. Por padrao, cada resposta espera entre 5 e 15 segundos antes do envio, alem dos limites de cadencia para evitar rajadas quando o trafego pago traz muitos leads ao mesmo tempo:
+
+```bash
+OUTBOUND_MIN_DELAY_MS=5000
+OUTBOUND_MAX_DELAY_MS=15000
+OUTBOUND_TYPING_CHARS_PER_SECOND=38
+OUTBOUND_TYPING_MIN_MS=5000
+OUTBOUND_TYPING_MAX_MS=15000
+OUTBOUND_MAX_PER_MINUTE=12
+OUTBOUND_MAX_PER_CONTACT_HOUR=8
+OUTBOUND_MIN_GAP_PER_CONTACT_MS=10000
+```
+
+Use valores mais conservadores quando ligar campanha nova. O ideal e o bot responder apenas quem iniciou conversa pelo anuncio e manter uma cadencia baixa no inicio.
+
+### Audios do WhatsApp
+
+Com `GEMINI_API_KEY` configurada, o bot tambem transcreve audios privados recebidos no WhatsApp e usa a transcricao no mesmo fluxo de atendimento. Se a transcricao falhar, o bot pede para o cliente mandar em texto.
+
+Configuracoes opcionais:
+
+```bash
+AUDIO_TRANSCRIPTION_ENABLED=true
+AUDIO_MAX_BYTES=14680064
+AUDIO_MAX_SECONDS=300
+AUDIO_TRANSCRIPTION_MAX_CHARS=2800
+AUDIO_TRANSCRIPTION_FAILURE_REPLY="Nao consegui ouvir esse audio com seguranca. Pode mandar em texto para eu continuar o atendimento?"
+```
 
 ## Fluxo comercial
 

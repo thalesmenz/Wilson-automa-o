@@ -363,6 +363,29 @@ app.get('/api/conversations', (_req, res) => {
   res.json(store.getConversations());
 });
 
+app.patch('/api/conversations/:jid/ai', async (req, res) => {
+  try {
+    const aiPaused = Boolean(req.body?.aiPaused);
+    const conversation = await store.setConversationAiPaused(req.params.jid, aiPaused);
+
+    if (aiPaused) {
+      whatsapp.cancelPendingReply(req.params.jid);
+    }
+
+    broadcastConversations();
+    addActivity({
+      id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      type: 'message',
+      message: aiPaused ? 'IA pausada para atendimento manual.' : 'IA retomada nesta conversa.',
+      meta: { aiPaused, jid: req.params.jid },
+      createdAt: new Date().toISOString(),
+    });
+    res.json(conversation);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
 app.get('/api/dashboard/summary', (_req, res) => {
   res.json(store.getDashboardSummary());
 });
