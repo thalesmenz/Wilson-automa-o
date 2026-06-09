@@ -359,6 +359,16 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [qrModalOpen, setQrModalOpen] = useState(false);
 
+  const whatsappProvider = status.provider || {};
+  const activeProvider = status.activeProvider || whatsappProvider.id || 'baileys';
+  const providerOptions = status.providerOptions || [
+    { id: 'baileys', label: 'WhatsApp via QR' },
+    { id: 'meta', label: 'WhatsApp Oficial Meta' },
+  ];
+  const providerStates = status.providers || {};
+  const activeProviderState = providerStates[activeProvider] || status;
+  const isMetaProvider = activeProvider === 'meta';
+  const connectionLabel = activeProviderState.provider?.label || whatsappProvider.label || 'WhatsApp';
   const connected = status.status === 'connected';
   const hasQr = Boolean(status.qrDataUrl);
   const googleOauthConfigured = Boolean(status.calendar?.oauth?.configured);
@@ -368,7 +378,17 @@ export default function App() {
   const followupsEnabled = Boolean(status.followups?.enabled);
   const followupsTone = getConnectionTone(followupsEnabled, followupsConfigured);
   const connectionTone = getConnectionTone(connected, hasQr, status.status === 'connecting');
-  const botLabel = connected ? 'Bot ativo' : hasQr ? 'QR pronto' : 'Bot pausado';
+  const botLabel = isMetaProvider
+    ? connected
+      ? 'Meta ativa'
+      : whatsappProvider.configured
+        ? 'Meta pronta'
+        : 'Meta pendente'
+    : connected
+      ? 'Bot ativo'
+      : hasQr
+        ? 'QR pronto'
+        : 'Bot pausado';
   const view = VIEWS[activeView] || VIEWS.overview;
   const metrics = METRIC_CONFIG.map((metric) => ({
     ...metric,
@@ -474,6 +494,14 @@ export default function App() {
   }
 
   async function openQrModal() {
+    if (isMetaProvider) {
+      await runAction(async () => {
+        const payload = await request('/api/whatsapp/connect', { method: 'POST' });
+        setStatus(payload);
+      }, 'Meta verificada.');
+      return;
+    }
+
     setQrModalOpen(true);
 
     if (!connected && !hasQr && status.status !== 'connecting') {
@@ -486,6 +514,23 @@ export default function App() {
       const payload = await request('/api/whatsapp/disconnect', { method: 'POST', body: JSON.stringify({ clearSession: false }) });
       setStatus(payload);
     }, 'WhatsApp desconectado.');
+  }
+
+  async function selectWhatsappProvider(provider) {
+    if (provider === activeProvider) {
+      return;
+    }
+
+    await runAction(async () => {
+      const payload = await request('/api/whatsapp/provider', {
+        method: 'PUT',
+        body: JSON.stringify({ provider }),
+      });
+      setStatus(payload);
+      if (provider === 'meta') {
+        setQrModalOpen(false);
+      }
+    }, provider === 'meta' ? 'WhatsApp Oficial Meta selecionado.' : 'WhatsApp via QR selecionado.');
   }
 
   async function clearWhatsAppSession() {
@@ -549,6 +594,47 @@ export default function App() {
     }, aiPaused ? 'IA pausada nesta conversa.' : 'IA retomada nesta conversa.');
   }
 
+  function getProviderStatusMeta(provider) {
+    const providerState = providerStates[provider] || {};
+    const providerConfig = providerState.provider || {};
+    const statusValue = providerState.status || 'disconnected';
+    const isActive = provider === activeProvider;
+    const configured = provider === 'baileys' ? true : Boolean(providerConfig.configured);
+
+    if (provider === 'meta' && !configured) {
+      return {
+        label: isActive ? 'Ativo - aguardando credenciais' : 'Aguardando credenciais',
+        tone: 'offline',
+      };
+    }
+
+    if (statusValue === 'connected') {
+      return {
+        label: isActive ? 'Ativo - conectado' : 'Conectado',
+        tone: 'online',
+      };
+    }
+
+    if (statusValue === 'connecting') {
+      return {
+        label: isActive ? 'Ativo - conectando' : 'Conectando',
+        tone: 'loading',
+      };
+    }
+
+    if (providerState.qrDataUrl || configured) {
+      return {
+        label: isActive ? 'Ativo - pronto' : 'Pronto para usar',
+        tone: 'ready',
+      };
+    }
+
+    return {
+      label: isActive ? 'Ativo - desconectado' : 'Desconectado',
+      tone: 'offline',
+    };
+  }
+
   function renderOverview() {
     return (
       <>
@@ -585,7 +671,7 @@ export default function App() {
             </div>
 
             <div className="status-stack">
-              <ConnectionItem icon={MessageCircle} label="WhatsApp" meta={STATUS_LABELS[status.status] || status.status} tone={connectionTone} />
+              <ConnectionItem icon={MessageCircle} label={connectionLabel} meta={STATUS_LABELS[status.status] || status.status} tone={connectionTone} />
               <ConnectionItem
                 icon={CalendarCheck}
                 label="Agendas"
@@ -709,9 +795,25 @@ export default function App() {
           <div className="panel-header">
             <div>
               <span className="eyebrow">WhatsApp</span>
-              <h2>Conexao principal</h2>
+              <h2>Canal ativo</h2>
             </div>
             <MessageCircle size={20} />
+          </div>
+
+          <div className="provider-switcher">
+            <div className="segmented-control" aria-label="Selecionar canal do WhatsApp">
+              {providerOptions.map((provider) => (
+                <button
+                  type="button"
+                  className={activeProvider === provider.id ? 'active' : ''}
+                  disabled={busy}
+                  key={provider.id}
+                  onClick={() => selectWhatsappProvider(provider.id)}
+                >
+                  {provider.id === 'meta' ? 'Meta Oficial' : 'QR Code'}
+                </button>
+              ))}
+            </div>
           </div>
 
           <div className="hero-connection">
@@ -719,10 +821,45 @@ export default function App() {
               <span />
               {botLabel}
             </span>
-            <button type="button" className={connected ? 'danger' : 'primary-action'} disabled={busy} onClick={connected ? disconnectWhatsApp : openQrModal}>
-              {connected ? <Power size={19} /> : <QrCode size={19} />}
-              {connected ? 'Desconectar' : 'Conectar'}
-            </button>
+            {isMetaProvider ? (
+              <button type="button" className="primary-action" disabled={busy || connected} onClick={openQrModal}>
+                {connected ? <CheckCircle2 size={19} /> : <RefreshCcw size={19} />}
+                {connected ? 'Ativo' : 'Verificar'}
+              </button>
+            ) : (
+              <button type="button" className={connected ? 'danger' : 'primary-action'} disabled={busy} onClick={connected ? disconnectWhatsApp : openQrModal}>
+                {connected ? <Power size={19} /> : <QrCode size={19} />}
+                {connected ? 'Desconectar' : 'Conectar'}
+              </button>
+            )}
+          </div>
+
+          <div className="connection-list">
+            {providerOptions.map((provider) => {
+              const providerMeta = getProviderStatusMeta(provider.id);
+
+              return (
+                <ConnectionItem
+                  icon={provider.id === 'meta' ? ShieldCheck : QrCode}
+                  key={provider.id}
+                  label={provider.label}
+                  meta={providerMeta.label}
+                  tone={providerMeta.tone}
+                  action={
+                    <button
+                      type="button"
+                      className="icon-button"
+                      disabled={busy || activeProvider === provider.id}
+                      onClick={() => selectWhatsappProvider(provider.id)}
+                      aria-label={`Selecionar ${provider.label}`}
+                      title={activeProvider === provider.id ? 'Canal ativo' : `Selecionar ${provider.label}`}
+                    >
+                      {activeProvider === provider.id ? <CheckCircle2 size={17} /> : <ArrowUpRight size={17} />}
+                    </button>
+                  }
+                />
+              );
+            })}
           </div>
         </article>
 
@@ -1015,8 +1152,8 @@ export default function App() {
               {botLabel}
             </span>
             <button type="button" className="primary-action" disabled={busy || connected} onClick={openQrModal}>
-              <QrCode size={19} />
-              {connected ? 'WhatsApp conectado' : 'Conectar WhatsApp'}
+              {isMetaProvider ? connected ? <CheckCircle2 size={19} /> : <RefreshCcw size={19} /> : <QrCode size={19} />}
+              {connected ? `${connectionLabel} conectado` : isMetaProvider ? 'Verificar Meta' : 'Conectar WhatsApp'}
             </button>
           </div>
         </header>
@@ -1031,7 +1168,7 @@ export default function App() {
         {activeView === 'followups' ? renderFollowups() : null}
       </section>
 
-      {qrModalOpen ? (
+      {qrModalOpen && !isMetaProvider ? (
         <div className="modal-backdrop" role="presentation">
           <section className="qr-modal" role="dialog" aria-modal="true" aria-labelledby="qr-modal-title">
             <div className="modal-header">

@@ -12,7 +12,9 @@ import { GeminiClient } from './geminiClient.js';
 import { GoogleCalendarClient } from './googleCalendarClient.js';
 import { ReminderWorker } from './reminderWorker.js';
 import { SupabaseService } from './supabaseClient.js';
+import { MetaWhatsAppClient } from './metaWhatsAppClient.js';
 import { WhatsAppClient } from './whatsappClient.js';
+import { normalizeWhatsappProvider, WhatsAppProviderManager } from './whatsappProviderManager.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -27,6 +29,7 @@ const defaultWhatsappSessionDir =
 const whatsappSessionDir = process.env.WHATSAPP_SESSION_DIR
   ? path.resolve(process.env.WHATSAPP_SESSION_DIR)
   : defaultWhatsappSessionDir;
+const defaultWhatsappProvider = normalizeWhatsappProvider(process.env.WHATSAPP_PROVIDER || 'baileys');
 const whatsappAutoConnect = process.env.WHATSAPP_AUTO_CONNECT !== 'false';
 const whatsappClearSessionConfirmation = process.env.WHATSAPP_CLEAR_SESSION_CONFIRMATION || 'APAGAR_SESSAO_WHATSAPP';
 const diagnosticsApiToken = process.env.DIAGNOSTICS_API_TOKEN || null;
@@ -86,15 +89,30 @@ const appointmentStore = new AppointmentStore({
 });
 const calendar = new GoogleCalendarClient();
 const gemini = new GeminiClient();
-const whatsapp = new WhatsAppClient({
+const baileysWhatsapp = new WhatsAppClient({
   appointmentStore,
   authDir: whatsappSessionDir,
   calendar,
   gemini,
   store,
 });
+const metaWhatsapp = new MetaWhatsAppClient({
+  appointmentStore,
+  authDir: whatsappSessionDir,
+  calendar,
+  gemini,
+  store,
+});
+const whatsapp = new WhatsAppProviderManager({
+  activeProvider: settings.whatsappProvider || defaultWhatsappProvider,
+  clients: {
+    baileys: baileysWhatsapp,
+    meta: metaWhatsapp,
+  },
+});
 const reminderWorker = new ReminderWorker({ appointmentStore, whatsapp });
-whatsapp.reminderWorker = reminderWorker;
+baileysWhatsapp.reminderWorker = reminderWorker;
+metaWhatsapp.reminderWorker = reminderWorker;
 reminderWorker.start();
 
 const activity = [];
@@ -178,7 +196,16 @@ whatsapp.on('automation:reply', () => broadcastConversations());
 whatsapp.on('activity', addActivity);
 
 app.use(cors({ origin: clientOrigin }));
-app.use(express.json({ limit: '1mb' }));
+app.use(
+  express.json({
+    limit: '1mb',
+    verify: (req, _res, buffer) => {
+      if (req.originalUrl?.startsWith('/api/meta/webhook')) {
+        req.rawBody = Buffer.from(buffer);
+      }
+    },
+  }),
+);
 
 app.get('/api/health', (_req, res) => {
   res.json({ ok: true, service: 'whatsapp-automation' });
@@ -186,6 +213,36 @@ app.get('/api/health', (_req, res) => {
 
 app.get('/api/status', (_req, res) => {
   res.json(whatsapp.getState());
+});
+
+app.get('/api/meta/webhook', (req, res) => {
+  const challenge = metaWhatsapp.verifyWebhookChallenge(req.query);
+
+  if (!challenge) {
+    res.status(403).send('Forbidden');
+    return;
+  }
+
+  res.status(200).type('text/plain').send(challenge);
+});
+
+app.post('/api/meta/webhook', (req, res) => {
+  if (!metaWhatsapp.verifyWebhookSignature(req)) {
+    res.status(403).json({ error: 'Assinatura do webhook invalida.' });
+    return;
+  }
+
+  res.sendStatus(200);
+
+  metaWhatsapp.handleWebhook(req.body).catch((error) => {
+    addActivity({
+      id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      type: 'error',
+      message: 'Falha ao processar webhook da Meta.',
+      meta: { error: error.message },
+      createdAt: new Date().toISOString(),
+    });
+  });
 });
 
 app.get('/api/google/auth-url', (req, res) => {
@@ -317,9 +374,44 @@ app.post('/api/whatsapp/disconnect', async (req, res) => {
   }
 });
 
+app.put('/api/whatsapp/provider', async (req, res) => {
+  try {
+    const provider = normalizeWhatsappProvider(req.body?.provider);
+    const state = whatsapp.setActiveProvider(provider);
+
+    settings.whatsappProvider = provider;
+    await writeSettings(settings);
+    addActivity({
+      id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      type: 'connection',
+      message: provider === 'meta' ? 'Canal ativo alterado para WhatsApp Oficial Meta.' : 'Canal ativo alterado para WhatsApp via QR.',
+      meta: { provider },
+      createdAt: new Date().toISOString(),
+    });
+
+    res.json(state);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
 app.post('/api/messages/send', async (req, res) => {
   try {
     const result = await whatsapp.sendText(req.body?.phone, req.body?.text);
+    broadcastConversations();
+    res.status(201).json(result);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.post('/api/meta/templates/send', async (req, res) => {
+  try {
+    const result = await metaWhatsapp.sendTemplate(req.body?.phone, {
+      components: Array.isArray(req.body?.components) ? req.body.components : [],
+      languageCode: req.body?.languageCode || req.body?.language || 'pt_BR',
+      name: req.body?.name,
+    });
     broadcastConversations();
     res.status(201).json(result);
   } catch (error) {
@@ -488,7 +580,7 @@ server.on('error', (error) => {
 
 async function shutdown() {
   reminderWorker.stop();
-  await whatsapp.disconnect({ clearSession: false }).catch(() => null);
+  await whatsapp.disconnectAll({ clearSession: false }).catch(() => null);
 
   server.close(() => {
     process.exit(0);
@@ -506,9 +598,9 @@ server.listen(port, () => {
   console.log(`API em http://localhost:${port}`);
   console.log(`Front em ${clientOrigin}`);
 
-  if (whatsappAutoConnect) {
+  if (whatsappAutoConnect && whatsapp.activeProvider === 'baileys') {
     const timer = setTimeout(async () => {
-      const diagnostics = await whatsapp.getSessionDiagnostics().catch((error) => {
+      const diagnostics = await baileysWhatsapp.getSessionDiagnostics().catch((error) => {
         addActivity({
           id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
           type: 'error',
@@ -530,7 +622,7 @@ server.listen(port, () => {
         return;
       }
 
-      whatsapp.connect().catch((error) => {
+      baileysWhatsapp.connect().catch((error) => {
         addActivity({
           id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
           type: 'error',

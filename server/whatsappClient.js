@@ -1069,6 +1069,7 @@ export class WhatsAppClient extends EventEmitter {
     this.outboundLastSentAtByJid = new Map();
     this.pendingReplies = new Map();
     this.scheduling = new Map();
+    this.providerActive = true;
   }
 
   getState() {
@@ -1079,6 +1080,12 @@ export class WhatsAppClient extends EventEmitter {
       lastError: this.lastError,
       startedAt: this.startedAt,
       hasSocket: Boolean(this.sock),
+      provider: {
+        id: 'baileys',
+        label: 'WhatsApp via QR',
+        mode: 'baileys',
+        configured: true,
+      },
       ai: this.gemini?.getStatus?.() || { enabled: false, model: null, provider: 'Gemini' },
       calendar: this.calendar?.getStatus?.() || { enabled: false, provider: 'Google Calendar' },
       persistence: this.appointmentStore?.getStatus?.() || { enabled: false, provider: 'Supabase' },
@@ -1196,6 +1203,18 @@ export class WhatsAppClient extends EventEmitter {
     }
 
     this.pendingReplies.delete(jid);
+  }
+
+  setProviderActive(active) {
+    this.providerActive = active !== false;
+
+    if (!this.providerActive) {
+      for (const jid of this.pendingReplies.keys()) {
+        this.cancelPendingReply(jid);
+      }
+    }
+
+    return this.providerActive;
   }
 
   async setSchedulingState(jid, state, { contactName } = {}) {
@@ -1516,11 +1535,12 @@ export class WhatsAppClient extends EventEmitter {
       const audioMessage = getAudioMessage(message);
       const contactName = message.pushName || jid.replace('@s.whatsapp.net', '');
       const aiPaused = this.isConversationAiPaused(jid);
+      const providerActive = this.providerActive !== false;
 
       if (!text && audioMessage) {
         conversationText = '[Áudio recebido]';
 
-        if (!aiPaused && (!isGroup || RESPOND_TO_GROUPS)) {
+        if (!aiPaused && providerActive && (!isGroup || RESPOND_TO_GROUPS)) {
           try {
             const transcription = await this.transcribeIncomingAudio(message, audioMessage, { contactName, jid });
             text = transcription.text;
@@ -1562,6 +1582,12 @@ export class WhatsAppClient extends EventEmitter {
 
       if (isGroup && !RESPOND_TO_GROUPS) {
         this.emitActivity('message', 'Mensagem de grupo ignorada pela configuracao.', { jid });
+        continue;
+      }
+
+      if (!providerActive) {
+        this.cancelPendingReply(jid);
+        this.emitActivity('message', `Canal inativo para ${contactName}. Mensagem salva sem resposta automática.`, { jid });
         continue;
       }
 

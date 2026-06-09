@@ -378,6 +378,14 @@ button:disabled {
   min-height: 72px;
 }
 
+.provider-switcher {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-start;
+  margin-bottom: 12px;
+}
+
 .panel {
   padding: 18px;
 }

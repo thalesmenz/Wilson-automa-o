@@ -64,6 +64,50 @@ Para trocar o fallback, ajuste `AUTO_REPLY_TEXT`. A personalidade e as regras co
 
 No painel de `Clientes`, use `Assumir` para pausar a IA em uma conversa especifica. Enquanto estiver em modo manual, novas mensagens continuam sendo salvas no historico, mas nenhuma resposta automatica e enviada para aquele contato. Use `Retomar IA` para ligar o atendimento automatico novamente.
 
+## WhatsApp Oficial Meta
+
+O projeto tambem pode rodar pela WhatsApp Business Platform oficial, usando a Cloud API da Meta junto com o QR Code/Baileys atual. Os dois modulos convivem no servidor; no painel em `Conexoes`, selecione qual canal fica ativo para envio manual e follow-ups.
+
+`WHATSAPP_PROVIDER` define apenas o canal inicial quando o servidor sobe. Depois, a selecao feita no painel fica salva em `APP_SETTINGS_PATH` ou `server/data/settings.json`.
+
+Configure a Meta quando tiver a conta pronta:
+
+```bash
+WHATSAPP_PROVIDER=meta
+META_WHATSAPP_ACCESS_TOKEN=token_de_sistema_ou_permanente
+META_WHATSAPP_PHONE_NUMBER_ID=id_do_numero_no_whatsapp_manager
+META_WHATSAPP_VERIFY_TOKEN=um_token_secreto_para_validar_o_webhook
+META_WHATSAPP_APP_SECRET=app_secret_opcional_para_validar_x_hub_signature_256
+META_WHATSAPP_GRAPH_API_VERSION=v25.0
+META_WHATSAPP_AUDIO_TRANSCRIPTION_ENABLED=true
+META_WHATSAPP_AUDIO_MAX_BYTES=14680064
+```
+
+No painel da Meta, configure o callback URL para:
+
+```txt
+https://seu-dominio.com/api/meta/webhook
+```
+
+Use o mesmo valor de `META_WHATSAPP_VERIFY_TOKEN` no campo `Verify Token` da Meta. Assine o campo `messages` do produto WhatsApp para receber mensagens e status.
+
+O modulo oficial ja cobre:
+
+- webhook GET de verificacao e POST de eventos da Meta;
+- envio de texto pelo endpoint oficial da Graph API;
+- leitura de texto, botoes/listas interativas e captions de midia;
+- transcricao de audio via Gemini quando configurado;
+- registro de falhas de entrega enviadas pela Meta;
+- endpoint interno para template oficial: `POST /api/meta/templates/send`.
+
+O envio manual, follow-ups, funil com IA, agendamento e historico continuam usando as mesmas telas do painel. O canal nao selecionado continua podendo registrar mensagens recebidas, mas nao envia resposta automatica enquanto estiver inativo.
+
+Referencias oficiais:
+
+- [WhatsApp Cloud API](https://developers.facebook.com/docs/whatsapp/cloud-api/)
+- [Envio de mensagens](https://developers.facebook.com/docs/whatsapp/cloud-api/guides/send-messages)
+- [Webhooks da Cloud API](https://developers.facebook.com/docs/whatsapp/cloud-api/webhooks)
+
 ### Reducao de risco operacional
 
 O bot usa pausas e indicador de digitacao antes de enviar mensagens. Por padrao, cada resposta espera entre 5 e 15 segundos antes do envio, alem dos limites de cadencia para evitar rajadas quando o trafego pago traz muitos leads ao mesmo tempo:
@@ -216,4 +260,4 @@ APP_SETTINGS_PATH=/var/data/settings.json
 
 ## Observacao
 
-Baileys e Venom nao sao APIs oficiais da Meta. Use com uma conta autorizada, mensagens consentidas e baixo volume. Para operacao comercial em producao, a opcao mais estavel e usar a WhatsApp Business Platform oficial.
+Baileys e Venom nao sao APIs oficiais da Meta. Use com uma conta autorizada, mensagens consentidas e baixo volume. Para operacao comercial em producao, configure `WHATSAPP_PROVIDER=meta` e use a WhatsApp Business Platform oficial.
