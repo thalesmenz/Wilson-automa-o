@@ -306,6 +306,23 @@ export class MetaWhatsAppClient extends WhatsAppClient {
     return body;
   }
 
+  async getPhoneNumberDiagnostics() {
+    const fields = [
+      'verified_name',
+      'name_status',
+      'code_verification_status',
+      'display_phone_number',
+      'quality_rating',
+      'platform_type',
+    ].join(',');
+    const body = await this.requestMetaGet(`${this.phoneNumberId}?fields=${encodeURIComponent(fields)}`);
+
+    return {
+      ...body,
+      phoneNumberIdEnding: this.phoneNumberId ? String(this.phoneNumberId).slice(-5) : null,
+    };
+  }
+
   async sendTextMessage(phone, text) {
     return this.requestMeta(`${this.phoneNumberId}/messages`, {
       messaging_product: 'whatsapp',

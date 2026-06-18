@@ -33,9 +33,10 @@ const defaultWhatsappProvider = normalizeWhatsappProvider(process.env.WHATSAPP_P
 const whatsappAutoConnect = process.env.WHATSAPP_AUTO_CONNECT !== 'false';
 const whatsappClearSessionConfirmation = process.env.WHATSAPP_CLEAR_SESSION_CONFIRMATION || 'APAGAR_SESSAO_WHATSAPP';
 const diagnosticsApiToken = process.env.DIAGNOSTICS_API_TOKEN || null;
+const metaDiagnosticsApiToken = diagnosticsApiToken || process.env.META_WHATSAPP_VERIFY_TOKEN || null;
 
 function requireDiagnosticsAccess(req, res, next) {
-  if (!diagnosticsApiToken) {
+  if (!metaDiagnosticsApiToken) {
     res.status(404).json({ error: 'Not found' });
     return;
   }
@@ -43,7 +44,7 @@ function requireDiagnosticsAccess(req, res, next) {
   const authorization = String(req.get('Authorization') || '');
   const token = authorization.startsWith('Bearer ') ? authorization.slice('Bearer '.length).trim() : '';
 
-  if (token !== diagnosticsApiToken) {
+  if (token !== metaDiagnosticsApiToken) {
     res.status(403).json({ error: 'Acesso negado.' });
     return;
   }
@@ -352,6 +353,17 @@ app.get('/api/whatsapp/session-diagnostics', requireDiagnosticsAccess, async (_r
     res.json(await whatsapp.getSessionDiagnostics());
   } catch (error) {
     res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/meta/phone-diagnostics', requireDiagnosticsAccess, async (_req, res) => {
+  try {
+    res.json(await metaWhatsapp.getPhoneNumberDiagnostics());
+  } catch (error) {
+    res.status(error.status || 500).json({
+      error: error.message,
+      meta: error.meta || null,
+    });
   }
 });
 
