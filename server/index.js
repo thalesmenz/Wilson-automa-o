@@ -367,6 +367,17 @@ app.get('/api/meta/phone-diagnostics', requireDiagnosticsAccess, async (_req, re
   }
 });
 
+app.post('/api/meta/register-phone', requireDiagnosticsAccess, async (req, res) => {
+  try {
+    res.json(await metaWhatsapp.registerPhoneNumber(req.body?.pin));
+  } catch (error) {
+    res.status(error.status || 400).json({
+      error: error.message,
+      meta: error.meta || null,
+    });
+  }
+});
+
 app.post('/api/whatsapp/disconnect', async (req, res) => {
   try {
     const clearSession = Boolean(req.body?.clearSession);

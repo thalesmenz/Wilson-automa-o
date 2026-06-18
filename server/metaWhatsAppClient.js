@@ -323,6 +323,19 @@ export class MetaWhatsAppClient extends WhatsAppClient {
     };
   }
 
+  async registerPhoneNumber(pin) {
+    const cleanPin = String(pin || '').trim();
+
+    if (!/^\d{6}$/.test(cleanPin)) {
+      throw new Error('Informe um PIN de 6 digitos para registrar o numero na Meta.');
+    }
+
+    return this.requestMeta(`${this.phoneNumberId}/register`, {
+      messaging_product: 'whatsapp',
+      pin: cleanPin,
+    });
+  }
+
   async sendTextMessage(phone, text) {
     return this.requestMeta(`${this.phoneNumberId}/messages`, {
       messaging_product: 'whatsapp',
