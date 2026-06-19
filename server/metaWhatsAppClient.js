@@ -110,15 +110,15 @@ function getTextFromMetaMessage(message) {
   }
 
   if (message?.type === 'button') {
-    return String(message.button?.text || message.button?.payload || '').trim();
+    return String(message.button?.payload || message.button?.text || '').trim();
   }
 
   if (message?.type === 'interactive') {
     return String(
-      message.interactive?.button_reply?.title ||
-        message.interactive?.button_reply?.id ||
-        message.interactive?.list_reply?.title ||
+      message.interactive?.button_reply?.id ||
+        message.interactive?.button_reply?.title ||
         message.interactive?.list_reply?.id ||
+        message.interactive?.list_reply?.title ||
         '',
     ).trim();
   }
@@ -150,6 +150,162 @@ function truncateTranscriptForFlow(value) {
   }
 
   return `${text.slice(0, AUDIO_TRANSCRIPTION_MAX_CHARS - 1).trim()}…`;
+}
+
+function normalizeQuickReplyText(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+}
+
+function stripNumberedOptions(value) {
+  const lines = String(value || '').split('\n');
+  const cleanLines = lines.filter((line) => {
+    const cleanLine = line.trim();
+    if (/^[1-9]\s*[.)\-–—]\s+/.test(cleanLine)) {
+      return false;
+    }
+
+    if (/^responda com (?:o )?n[uú]mero/i.test(cleanLine)) {
+      return false;
+    }
+
+    return true;
+  });
+
+  return cleanLines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+function buildQuickReplyMessage(text, buttons, { keepNumberedOptions = false } = {}) {
+  const cleanButtons = buttons
+    .map((button) => ({
+      id: String(button.id || '').trim(),
+      title: String(button.title || '').trim(),
+    }))
+    .filter((button) => button.id && button.title)
+    .slice(0, 3);
+
+  if (!cleanButtons.length) {
+    return null;
+  }
+
+  return {
+    body: keepNumberedOptions ? String(text || '').trim() : stripNumberedOptions(text),
+    buttons: cleanButtons,
+  };
+}
+
+function getQuickReplyForText(text) {
+  const normalized = normalizeQuickReplyText(text);
+
+  if (normalized.includes('me conta: o que voce precisa resolver hoje?')) {
+    return buildQuickReplyMessage(text, [
+      { id: '1', title: 'Consulta R$150' },
+      { id: '2', title: 'Como funciona' },
+      { id: '3', title: 'Urgente hoje' },
+    ]);
+  }
+
+  if (normalized.includes('funciona assim: fazemos uma consulta tecnica')) {
+    return buildQuickReplyMessage(text, [
+      { id: '1', title: 'Seguir consulta' },
+      { id: '2', title: 'Tenho dúvida' },
+      { id: '3', title: 'Não agora' },
+    ]);
+  }
+
+  if (normalized.includes('para eu te orientar corretamente, qual e o seu caso?')) {
+    return buildQuickReplyMessage(text, [
+      { id: '1', title: 'Nome negativado' },
+      { id: '2', title: 'Banco não aprova' },
+      { id: '3', title: 'Não sei/dúvida' },
+    ]);
+  }
+
+  if (normalized.includes('consulta para descobrir o problema') && normalized.includes('tirar uma duvida antes')) {
+    return buildQuickReplyMessage(text, [
+      { id: '1', title: 'Consulta R$150' },
+      { id: '2', title: 'Tirar dúvida' },
+      { id: '3', title: 'Não agora' },
+    ]);
+  }
+
+  if (normalized.includes('qual e a area de atuacao do cnpj?')) {
+    return buildQuickReplyMessage(text, [
+      { id: '1', title: 'Agro' },
+      { id: '2', title: 'Comércio/serv.' },
+      { id: '4', title: 'Outra área' },
+    ]);
+  }
+
+  if (normalized.includes('o valor da consulta e r$') && normalized.includes('quero seguir com a consulta')) {
+    return buildQuickReplyMessage(text, [
+      { id: '1', title: 'Quero seguir' },
+      { id: '2', title: 'Entender melhor' },
+      { id: '3', title: 'Não agora' },
+    ]);
+  }
+
+  if (normalized.includes('ela nao promete') && normalized.includes('enviar outra duvida em texto')) {
+    return buildQuickReplyMessage(text, [
+      { id: '1', title: 'Quero seguir' },
+      { id: '2', title: 'Tenho dúvida' },
+      { id: '3', title: 'Não agora' },
+    ]);
+  }
+
+  if (normalized.includes('me envie sua duvida em uma frase')) {
+    return buildQuickReplyMessage(text, [
+      { id: '1', title: 'Seguir consulta' },
+      { id: '3', title: 'Não agora' },
+    ]);
+  }
+
+  if (normalized.includes('vamos iniciar pela consulta de negativado')) {
+    return buildQuickReplyMessage(text, [
+      { id: '1', title: 'Sim, seguir' },
+      { id: '2', title: 'Entender melhor' },
+      { id: '3', title: 'Não agora' },
+    ]);
+  }
+
+  if (normalized.includes('consulta de negativado - r$150') && normalized.includes('consulta do cnpj - r$250')) {
+    return buildQuickReplyMessage(text, [
+      { id: '1', title: 'Negativado R$150' },
+      { id: '2', title: 'CNPJ R$250' },
+      { id: '3', title: 'Não agora' },
+    ]);
+  }
+
+  if (normalized.includes('como prefere o atendimento?') && normalized.includes('google meet')) {
+    return buildQuickReplyMessage(text, [
+      { id: '1', title: 'Google Meet' },
+      { id: '2', title: 'Ligação/Zap' },
+    ]);
+  }
+
+  if (normalized.includes('tenho estes horarios')) {
+    return buildQuickReplyMessage(
+      text,
+      [
+        { id: '1', title: '1º horário' },
+        { id: '2', title: '2º horário' },
+        { id: '3', title: '3º horário' },
+      ],
+      { keepNumberedOptions: true },
+    );
+  }
+
+  if (normalized.includes('posso marcar') && normalized.includes('trocar o horario')) {
+    return buildQuickReplyMessage(text, [
+      { id: '1', title: 'Confirmar' },
+      { id: '2', title: 'Trocar horário' },
+      { id: '3', title: 'Cancelar' },
+    ]);
+  }
+
+  return null;
 }
 
 export class MetaWhatsAppClient extends WhatsAppClient {
@@ -415,6 +571,52 @@ export class MetaWhatsAppClient extends WhatsAppClient {
     });
   }
 
+  async sendQuickReplyMessage(phone, { body, buttons }) {
+    const cleanBody = String(body || '').trim();
+    const cleanButtons = (buttons || [])
+      .map((button) => ({
+        id: String(button.id || '').trim(),
+        title: String(button.title || '').trim(),
+      }))
+      .filter((button) => button.id && button.title)
+      .slice(0, 3);
+
+    if (!cleanBody || !cleanButtons.length) {
+      return this.sendTextMessage(phone, cleanBody || body);
+    }
+
+    return this.requestMeta(`${this.phoneNumberId}/messages`, {
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to: normalizePhoneDigits(phone),
+      type: 'interactive',
+      interactive: {
+        type: 'button',
+        body: {
+          text: cleanBody,
+        },
+        action: {
+          buttons: cleanButtons.map((button) => ({
+            type: 'reply',
+            reply: {
+              id: button.id,
+              title: button.title,
+            },
+          })),
+        },
+      },
+    });
+  }
+
+  async sendAutomationMessage(phone, text) {
+    const quickReply = getQuickReplyForText(text);
+    if (quickReply) {
+      return this.sendQuickReplyMessage(phone, quickReply);
+    }
+
+    return this.sendTextMessage(phone, text);
+  }
+
   async sendTemplateMessage(phone, { components = [], languageCode = 'pt_BR', name }) {
     const templateName = String(name || '').trim();
     if (!templateName) {
@@ -593,7 +795,7 @@ export class MetaWhatsAppClient extends WhatsAppClient {
       await sleep(delayMs);
     }
 
-    const payload = await this.sendTextMessage(jidToPhone(jid), responseText);
+    const payload = await this.sendAutomationMessage(jidToPhone(jid), responseText);
     const metaMessageId = payload?.messages?.[0]?.id || null;
     this.noteOutboundSent(jid);
 
@@ -714,7 +916,7 @@ export class MetaWhatsAppClient extends WhatsAppClient {
       };
     }
 
-    const payload = await this.sendTextMessage(jidToPhone(jid), cleanText);
+    const payload = await this.sendAutomationMessage(jidToPhone(jid), cleanText);
     const metaMessageId = payload?.messages?.[0]?.id || null;
     this.noteOutboundSent(jid);
 

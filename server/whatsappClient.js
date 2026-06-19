@@ -758,7 +758,8 @@ function buildAvailableSlotsMessage(slots, missing, { heading = 'Tenho estes hor
     return buildMissingScheduleMessage(missing);
   }
 
-  const options = slots.map((slot, index) => `${index + 1}) ${formatAvailableSlot(slot)}`).join('\n');
+  const visibleSlots = slots.slice(0, 3);
+  const options = visibleSlots.map((slot, index) => `${index + 1}) ${formatAvailableSlot(slot)}`).join('\n');
   const needsContact = missing.includes('email ou confirmação de ligação por telefone');
   const needsPhone = missing.includes('telefone para ligação');
   const emailLine = needsContact
@@ -774,7 +775,8 @@ function buildPreferredAvailableSlotsMessage(slots, missing, { heading = 'Tenho 
     return buildPreferredMissingScheduleMessage(missing);
   }
 
-  const options = slots.map((slot, index) => `${index + 1}) ${formatAvailableSlot(slot)}`).join('\n');
+  const visibleSlots = slots.slice(0, 3);
+  const options = visibleSlots.map((slot, index) => `${index + 1}) ${formatAvailableSlot(slot)}`).join('\n');
   const needsPhone = missing.includes('telefone para ligação');
   const phoneLine = needsPhone ? '\n\nTambém me confirme o telefone com DDD para a ligação.' : '';
 
@@ -888,7 +890,7 @@ function buildQualificationMessage(data) {
     data.qualificationQuestion ||
     'Para eu te orientar corretamente, qual é o seu caso?';
 
-  return `${question}\n\n1. Meu nome está negativado/restrito no Serasa, SPC ou Boa Vista\n2. Não estou negativado, mas banco não aprova crédito, financiamento ou limite\n3. Não sei exatamente qual é o problema\n4. Só quero tirar uma dúvida`;
+  return `${question}\n\n1. Meu nome está negativado/restrito no Serasa, SPC ou Boa Vista\n2. Não estou negativado, mas banco não aprova crédito, financiamento ou limite\n3. Não sei exatamente qual é o problema ou quero tirar uma dúvida`;
 }
 
 function buildAnalysisOfferMessage(data) {
@@ -917,6 +919,10 @@ function buildAnalysisDetailsMessage(data) {
 
 function buildHowItWorksMessage() {
   return 'Funciona assim: fazemos uma consulta técnica para identificar o que está travando seu crédito, como dívidas, restrições, rating bancário, Bacen, cheque ou Cadin. Com esse diagnóstico, orientamos o próximo passo com segurança.\n\n1. Quero seguir com a consulta de R$150\n2. Tenho outra dúvida\n3. Não quero seguir agora';
+}
+
+function buildUnknownOrQuestionMessage() {
+  return 'Sem problema. Você quer fazer a consulta para descobrir o problema ou prefere tirar uma dúvida antes?\n\n1. Consulta de negativado - R$150\n2. Tirar dúvida\n3. Não quero seguir agora';
 }
 
 function buildAskForQuestionMessage() {
@@ -2475,6 +2481,63 @@ export class WhatsAppClient extends EventEmitter {
     }
 
     if (current?.status === 'awaiting_qualification' && menuOption) {
+      if (current.data?.menu === 'unknown_or_question') {
+        if (menuOption === 3) {
+          await this.clearSchedulingState(jid);
+          await this.recordLeadStatus({
+            contactName,
+            jid,
+            reason: 'Cliente escolheu não seguir após informar dúvida/problema indefinido.',
+            status: 'discarded',
+          });
+
+          return {
+            ...this.defaultReply,
+            name: 'Qualificação',
+            response: buildPaymentRefusalMessage(),
+          };
+        }
+
+        if (menuOption === 2) {
+          const data = mergeScheduleData(current.data, {
+            menu: 'awaiting_custom_question',
+          });
+
+          await this.setSchedulingState(jid, {
+            ...current,
+            data,
+            status: 'awaiting_payment_confirmation',
+            updatedAt: new Date().toISOString(),
+          }, { contactName });
+
+          return {
+            ...this.defaultReply,
+            name: 'Qualificação',
+            response: buildAskForQuestionMessage(),
+          };
+        }
+
+        if (menuOption === 1) {
+          const data = mergeScheduleData(current.data, {
+            analysisAccepted: true,
+            leadConfidence: 0.7,
+            leadType: 'low_ticket',
+            notes: 'Cliente escolheu consulta para descobrir o problema.',
+            paymentAmount: 150,
+          });
+
+          return this.createPaymentAcceptedReply({
+            contactName,
+            current: {
+              ...current,
+              data,
+            },
+            jid,
+            text,
+          });
+        }
+      }
+
       if (current.data?.menu === 'curious_offer' && menuOption === 3) {
         await this.clearSchedulingState(jid);
         await this.recordLeadStatus({
@@ -2511,16 +2574,36 @@ export class WhatsAppClient extends EventEmitter {
         };
       }
 
-      if (menuOption === 1 || menuOption === 2 || menuOption === 3) {
+      if (menuOption === 3) {
+        const data = mergeScheduleData(current.data, {
+          analysisAccepted: false,
+          leadConfidence: 0.7,
+          leadType: 'low_ticket',
+          menu: 'unknown_or_question',
+          notes: 'Cliente não sabe exatamente qual é o problema ou quer tirar dúvida.',
+          paymentAmount: ANALYSIS_FEES.low_ticket,
+        });
+
+        await this.setSchedulingState(jid, {
+          data,
+          status: 'awaiting_qualification',
+          updatedAt: new Date().toISOString(),
+        }, { contactName });
+
+        return {
+          ...this.defaultReply,
+          name: 'Qualificação',
+          response: buildUnknownOrQuestionMessage(),
+        };
+      }
+
+      if (menuOption === 1 || menuOption === 2) {
         const selectedLeadType = menuOption === 2 ? 'high_ticket' : 'low_ticket';
         const data = mergeScheduleData(current.data, {
           analysisAccepted: false,
           leadConfidence: 1,
           leadType: selectedLeadType,
-          notes:
-            menuOption === 3
-              ? 'Cliente não sabe exatamente qual é o problema; iniciar pela consulta de negativado.'
-              : `Cliente selecionou opção ${menuOption} no menu de qualificação.`,
+          notes: `Cliente selecionou opção ${menuOption} no menu de qualificação.`,
           paymentAmount: ANALYSIS_FEES[selectedLeadType],
         });
 
@@ -2533,7 +2616,7 @@ export class WhatsAppClient extends EventEmitter {
         return {
           ...this.defaultReply,
           name: 'Qualificação',
-          response: menuOption === 3 ? buildUnknownProblemOfferMessage() : buildAnalysisOfferMessage(data),
+          response: buildAnalysisOfferMessage(data),
         };
       }
     }
