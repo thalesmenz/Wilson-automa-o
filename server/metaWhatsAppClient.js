@@ -49,6 +49,23 @@ function normalizePhoneDigits(value) {
   return digits;
 }
 
+function normalizeMetaObjectId(value, label = 'ID') {
+  const cleanValue = String(value || '').trim();
+
+  if (!/^\d+$/.test(cleanValue)) {
+    throw new Error(`Informe um ${label} valido.`);
+  }
+
+  return cleanValue;
+}
+
+function normalizeSubscribedFields(value) {
+  const fields = Array.isArray(value) ? value : String(value || 'messages').split(',');
+  const cleanFields = [...new Set(fields.map((field) => String(field || '').trim()).filter(Boolean))];
+
+  return cleanFields.length ? cleanFields : ['messages'];
+}
+
 function phoneToJid(value) {
   return `${normalizePhoneDigits(value)}@s.whatsapp.net`;
 }
@@ -141,6 +158,7 @@ export class MetaWhatsAppClient extends WhatsAppClient {
     appSecret = process.env.META_WHATSAPP_APP_SECRET,
     graphApiVersion = DEFAULT_GRAPH_API_VERSION,
     phoneNumberId = process.env.META_WHATSAPP_PHONE_NUMBER_ID,
+    whatsappBusinessAccountId = process.env.META_WHATSAPP_BUSINESS_ACCOUNT_ID || process.env.META_WHATSAPP_WABA_ID,
     verifyToken = process.env.META_WHATSAPP_VERIFY_TOKEN,
     ...options
   } = {}) {
@@ -149,6 +167,7 @@ export class MetaWhatsAppClient extends WhatsAppClient {
     this.appSecret = appSecret || null;
     this.graphApiVersion = normalizeGraphApiVersion(graphApiVersion);
     this.phoneNumberId = phoneNumberId || null;
+    this.whatsappBusinessAccountId = whatsappBusinessAccountId || null;
     this.verifyToken = verifyToken || null;
     this.processedWebhookMessageIds = new Set();
     this.processedWebhookMessageQueue = [];
@@ -306,6 +325,39 @@ export class MetaWhatsAppClient extends WhatsAppClient {
     return body;
   }
 
+  async requestMetaForm(pathname, payload = {}) {
+    if (!this.isReady) {
+      throw new Error('Meta WhatsApp Cloud API nao configurada.');
+    }
+
+    const formBody = new URLSearchParams();
+    for (const [key, value] of Object.entries(payload || {})) {
+      if (value !== undefined && value !== null && value !== '') {
+        formBody.set(key, String(value));
+      }
+    }
+
+    const response = await fetch(this.getGraphUrl(pathname), {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.accessToken}`,
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: formBody,
+    });
+    const body = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      const message = body?.error?.message || `Meta Graph API retornou HTTP ${response.status}.`;
+      const error = new Error(message);
+      error.status = response.status;
+      error.meta = body;
+      throw error;
+    }
+
+    return body;
+  }
+
   async getPhoneNumberDiagnostics() {
     const fields = [
       'verified_name',
@@ -321,6 +373,20 @@ export class MetaWhatsAppClient extends WhatsAppClient {
       ...body,
       phoneNumberIdEnding: this.phoneNumberId ? String(this.phoneNumberId).slice(-5) : null,
     };
+  }
+
+  getWabaId(wabaId = this.whatsappBusinessAccountId) {
+    return normalizeMetaObjectId(wabaId, 'WABA ID');
+  }
+
+  async getWabaWebhookSubscriptions(wabaId = this.whatsappBusinessAccountId) {
+    return this.requestMetaGet(`${this.getWabaId(wabaId)}/subscribed_apps`);
+  }
+
+  async subscribeWabaToWebhooks({ wabaId = this.whatsappBusinessAccountId, fields = ['messages'] } = {}) {
+    return this.requestMetaForm(`${this.getWabaId(wabaId)}/subscribed_apps`, {
+      subscribed_fields: normalizeSubscribedFields(fields).join(','),
+    });
   }
 
   async registerPhoneNumber(pin) {

@@ -34,6 +34,7 @@ const whatsappAutoConnect = process.env.WHATSAPP_AUTO_CONNECT !== 'false';
 const whatsappClearSessionConfirmation = process.env.WHATSAPP_CLEAR_SESSION_CONFIRMATION || 'APAGAR_SESSAO_WHATSAPP';
 const diagnosticsApiToken = process.env.DIAGNOSTICS_API_TOKEN || null;
 const metaDiagnosticsApiToken = diagnosticsApiToken || process.env.META_WHATSAPP_VERIFY_TOKEN || null;
+const metaWhatsappBusinessAccountId = process.env.META_WHATSAPP_BUSINESS_ACCOUNT_ID || process.env.META_WHATSAPP_WABA_ID || null;
 
 function requireDiagnosticsAccess(req, res, next) {
   if (!metaDiagnosticsApiToken) {
@@ -361,6 +362,33 @@ app.get('/api/meta/phone-diagnostics', requireDiagnosticsAccess, async (_req, re
     res.json(await metaWhatsapp.getPhoneNumberDiagnostics());
   } catch (error) {
     res.status(error.status || 500).json({
+      error: error.message,
+      meta: error.meta || null,
+    });
+  }
+});
+
+app.get('/api/meta/waba-subscriptions', requireDiagnosticsAccess, async (req, res) => {
+  try {
+    res.json(await metaWhatsapp.getWabaWebhookSubscriptions(req.query?.wabaId || metaWhatsappBusinessAccountId));
+  } catch (error) {
+    res.status(error.status || 500).json({
+      error: error.message,
+      meta: error.meta || null,
+    });
+  }
+});
+
+app.post('/api/meta/waba-subscriptions', requireDiagnosticsAccess, async (req, res) => {
+  try {
+    res.json(
+      await metaWhatsapp.subscribeWabaToWebhooks({
+        fields: req.body?.fields || ['messages'],
+        wabaId: req.body?.wabaId || metaWhatsappBusinessAccountId,
+      }),
+    );
+  } catch (error) {
+    res.status(error.status || 400).json({
       error: error.message,
       meta: error.meta || null,
     });
