@@ -410,6 +410,56 @@ button:disabled {
   min-width: 0;
 }
 
+.chat-header-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  justify-content: flex-end;
+}
+
+.chat-toolbar {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  margin: -2px 0 14px;
+}
+
+.chat-search {
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid #dfe7eb;
+  border-radius: 8px;
+  color: #6a7881;
+  display: flex;
+  flex: 1 1 340px;
+  gap: 8px;
+  min-height: 42px;
+  min-width: 0;
+  padding: 0 12px;
+}
+
+.chat-search:focus-within {
+  border-color: #126e5c;
+  box-shadow: 0 0 0 3px rgba(18, 110, 92, 0.1);
+}
+
+.chat-search input {
+  background: transparent;
+  border: 0;
+  color: #17211d;
+  flex: 1;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 800;
+  min-width: 0;
+  outline: 0;
+}
+
+.chat-search input::placeholder {
+  color: #8c9aa2;
+}
+
 .clients-layout {
   align-items: start;
   display: grid;
@@ -467,6 +517,11 @@ button:disabled {
   border-color: #126e5c;
 }
 
+.client-row.needs-reply:not(.selected) {
+  border-color: #b9d4ff;
+  box-shadow: inset 3px 0 0 #2b72c9;
+}
+
 .client-row:focus-visible {
   outline: 2px solid #126e5c;
   outline-offset: 2px;
@@ -486,7 +541,7 @@ button:disabled {
   border: 1px solid #e1e8ec;
   border-radius: 8px;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
   min-height: 540px;
   min-width: 0;
   overflow: hidden;
@@ -547,6 +602,26 @@ button:disabled {
   justify-content: flex-end;
 }
 
+.conversation-context {
+  align-items: center;
+  background: #ffffff;
+  border-bottom: 1px solid #e7edf1;
+  color: #65747d;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 9px 14px;
+}
+
+.conversation-context span {
+  background: #f4f7f8;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 900;
+  min-height: 25px;
+  padding: 4px 9px;
+}
+
 .manual-toggle {
   align-items: center;
   background: #ffffff;
@@ -578,7 +653,7 @@ button:disabled {
   align-content: start;
   display: grid;
   gap: 10px;
-  max-height: calc(100vh - 245px);
+  max-height: calc(100vh - 370px);
   min-height: 0;
   overflow: auto;
   padding: 14px;
@@ -641,6 +716,57 @@ button:disabled {
   margin: 0;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
+}
+
+.message-composer {
+  background: #ffffff;
+  border-top: 1px solid #e3eaee;
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+
+.message-composer textarea {
+  background: #fbfcfd;
+  border: 1px solid #d9e3e8;
+  border-radius: 8px;
+  color: #17211d;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 750;
+  line-height: 1.45;
+  min-height: 82px;
+  outline: 0;
+  padding: 10px 12px;
+  resize: vertical;
+  width: 100%;
+}
+
+.message-composer textarea:focus {
+  border-color: #126e5c;
+  box-shadow: 0 0 0 3px rgba(18, 110, 92, 0.1);
+}
+
+.message-composer textarea::placeholder {
+  color: #8c9aa2;
+}
+
+.composer-footer {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.composer-footer span {
+  color: #63727c;
+  font-size: 12px;
+  font-weight: 850;
+  min-width: 0;
+}
+
+.send-message-button {
+  flex: 0 0 auto;
 }
 
 .client-avatar {
@@ -1318,6 +1444,20 @@ button:disabled {
     grid-template-columns: 1fr;
   }
 
+  .chat-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .chat-toolbar .segmented-control {
+    justify-content: stretch;
+    width: 100%;
+  }
+
+  .chat-toolbar .segmented-control button {
+    flex: 1;
+  }
+
   .clients-layout.has-selection .conversation-panel {
     order: -1;
   }
@@ -1331,7 +1471,7 @@ button:disabled {
   }
 
   .conversation-messages {
-    max-height: 520px;
+    max-height: 460px;
   }
 
   .calendar-week-grid {
@@ -1398,6 +1538,19 @@ button:disabled {
 
   .conversation-tags {
     justify-content: flex-start;
+  }
+
+  .chat-header-tags {
+    justify-content: flex-start;
+  }
+
+  .composer-footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .send-message-button {
+    width: 100%;
   }
 
   .message-bubble {

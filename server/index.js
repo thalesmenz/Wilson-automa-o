@@ -540,6 +540,62 @@ app.get('/api/conversations', (_req, res) => {
   res.json(store.getConversations());
 });
 
+app.post('/api/conversations/:jid/messages', async (req, res) => {
+  let conversationChanged = false;
+
+  try {
+    const jid = String(req.params.jid || '').trim();
+    const text = String(req.body?.text || '').trim();
+    const pauseAi = req.body?.pauseAi !== false;
+    const current = store.getConversation(jid);
+    const contactName = current?.contactName || jid;
+
+    if (!jid || !text) {
+      res.status(400).json({ error: 'Informe a conversa e a mensagem.' });
+      return;
+    }
+
+    if (pauseAi) {
+      await store.setConversationAiPaused(jid, true, { contactName });
+      whatsapp.cancelPendingReply(jid);
+      conversationChanged = true;
+    }
+
+    const result = await whatsapp.sendTextToJid(jid, text, {
+      automationName: 'Atendente',
+      contactName,
+    });
+
+    if (result?.skipped) {
+      if (conversationChanged) {
+        broadcastConversations();
+      }
+
+      res.status(429).json({ error: 'Envio bloqueado pelos limites de seguranca.', result });
+      return;
+    }
+
+    const conversation = store.getConversation(result.jid || jid) || store.getConversation(jid);
+
+    broadcastConversations();
+    addActivity({
+      id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      type: 'message',
+      message: `Mensagem manual enviada para ${contactName}.`,
+      meta: { jid, provider: whatsapp.activeProvider },
+      createdAt: new Date().toISOString(),
+    });
+
+    res.status(201).json({ ...result, conversation });
+  } catch (error) {
+    if (conversationChanged) {
+      broadcastConversations();
+    }
+
+    res.status(error.status || 400).json({ error: error.message });
+  }
+});
+
 app.patch('/api/conversations/:jid/ai', async (req, res) => {
   try {
     const aiPaused = Boolean(req.body?.aiPaused);

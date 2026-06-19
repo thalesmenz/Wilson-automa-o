@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
 import {
   Activity,
@@ -17,6 +17,8 @@ import {
   Power,
   QrCode,
   RefreshCcw,
+  Search,
+  Send,
   ShieldCheck,
   Trash2,
   Unlink,
@@ -307,6 +309,15 @@ function isAiPausedForConversation(conversation, lead) {
   return Boolean(conversation?.aiPaused ?? conversation?.lead?.aiPaused ?? lead?.aiPaused);
 }
 
+function getLastMessage(conversation) {
+  const messages = conversation?.messages || [];
+  return messages[messages.length - 1] || null;
+}
+
+function leadNeedsReply(conversation) {
+  return getLastMessage(conversation)?.direction === 'in';
+}
+
 function getAppointmentRoute(appointment) {
   if (appointment.leadType === 'high_ticket') {
     return 'Wilson';
@@ -350,14 +361,19 @@ export default function App() {
   const [appointments, setAppointments] = useState([]);
   const [agendaDate, setAgendaDate] = useState(() => new Date());
   const [agendaView, setAgendaView] = useState('week');
+  const [chatFilter, setChatFilter] = useState('all');
+  const [chatSearch, setChatSearch] = useState('');
   const [conversations, setConversations] = useState({});
   const [followups, setFollowups] = useState({ recent: [], upcoming: [] });
   const [leads, setLeads] = useState([]);
+  const [manualMessage, setManualMessage] = useState('');
   const [notice, setNotice] = useState('');
   const [selectedClientJid, setSelectedClientJid] = useState(null);
   const [summary, setSummary] = useState(EMPTY_SUMMARY);
   const [busy, setBusy] = useState(false);
   const [qrModalOpen, setQrModalOpen] = useState(false);
+  const [sendingMessage, setSendingMessage] = useState(false);
+  const messagesEndRef = useRef(null);
 
   const whatsappProvider = status.provider || {};
   const activeProvider = status.activeProvider || whatsappProvider.id || 'baileys';
@@ -419,6 +435,56 @@ export default function App() {
   const selectedConversation = selectedClientJid ? conversations[selectedClientJid] : null;
   const selectedMessages = selectedConversation?.messages || [];
   const selectedAiPaused = isAiPausedForConversation(selectedConversation, selectedLead);
+  const selectedLastMessage = getLastMessage(selectedConversation);
+  const selectedNeedsReply = leadNeedsReply(selectedConversation);
+  const canSendManualMessage = Boolean(selectedLead?.jid && connected && manualMessage.trim() && !sendingMessage);
+
+  const chatSummary = useMemo(() => {
+    return leads.reduce(
+      (totals, lead) => {
+        const conversation = conversations[lead.jid];
+        if (leadNeedsReply(conversation)) {
+          totals.needsReply += 1;
+        }
+
+        if (isAiPausedForConversation(conversation, lead)) {
+          totals.manual += 1;
+        }
+
+        return totals;
+      },
+      { needsReply: 0, manual: 0 },
+    );
+  }, [conversations, leads]);
+
+  const filteredLeads = useMemo(() => {
+    const query = chatSearch.trim().toLocaleLowerCase('pt-BR');
+
+    return leads.filter((lead) => {
+      const conversation = conversations[lead.jid];
+      const matchesFilter =
+        chatFilter === 'manual'
+          ? isAiPausedForConversation(conversation, lead)
+          : chatFilter === 'needsReply'
+            ? leadNeedsReply(conversation)
+            : true;
+
+      if (!matchesFilter) {
+        return false;
+      }
+
+      if (!query) {
+        return true;
+      }
+
+      const haystack = [lead.contactName, lead.phone, lead.route, lead.lastMessage, getLeadLabel(lead)]
+        .filter(Boolean)
+        .join(' ')
+        .toLocaleLowerCase('pt-BR');
+
+      return haystack.includes(query);
+    });
+  }, [chatFilter, chatSearch, conversations, leads]);
 
   const recentActivity = useMemo(() => {
     return activity.slice(0, 4);
@@ -470,6 +536,20 @@ export default function App() {
   }, [leads, selectedClientJid]);
 
   useEffect(() => {
+    setManualMessage('');
+  }, [selectedClientJid]);
+
+  useEffect(() => {
+    if (activeView !== 'clients' || !selectedClientJid) {
+      return;
+    }
+
+    window.requestAnimationFrame(() => {
+      messagesEndRef.current?.scrollIntoView({ block: 'end' });
+    });
+  }, [activeView, selectedClientJid, selectedMessages.length]);
+
+  useEffect(() => {
     if (activeView !== 'clients' || !selectedClientJid || !window.matchMedia('(max-width: 920px)').matches) {
       return;
     }
@@ -490,6 +570,38 @@ export default function App() {
       setNotice(error.message);
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function sendManualMessage(event) {
+    event.preventDefault();
+
+    const text = manualMessage.trim();
+    if (!selectedLead?.jid || !text || sendingMessage) {
+      return;
+    }
+
+    setSendingMessage(true);
+    setNotice('');
+
+    try {
+      const payload = await request(`/api/conversations/${encodeURIComponent(selectedLead.jid)}/messages`, {
+        method: 'POST',
+        body: JSON.stringify({ pauseAi: true, text }),
+      });
+
+      setManualMessage('');
+
+      if (payload?.conversation?.jid) {
+        setConversations((current) => ({ ...current, [payload.conversation.jid]: payload.conversation }));
+      }
+
+      await refreshDashboard().catch(() => null);
+      setNotice('Mensagem enviada. Atendimento manual ativo para este cliente.');
+    } catch (error) {
+      setNotice(error.message);
+    } finally {
+      setSendingMessage(false);
     }
   }
 
@@ -696,39 +808,72 @@ export default function App() {
       <article className="panel clients-panel">
         <div className="panel-header">
           <div>
-            <span className="eyebrow">Pipeline</span>
-            <h2>Clientes recentes</h2>
+            <span className="eyebrow">Atendimento</span>
+            <h2>Chats de clientes</h2>
           </div>
-          <Tag type="neutral">{leads.length} registros</Tag>
+          <div className="chat-header-tags">
+            <Tag type="neutral">{leads.length} registros</Tag>
+            {chatSummary.needsReply ? <Tag type="high">{chatSummary.needsReply} para responder</Tag> : null}
+            {chatSummary.manual ? <Tag type="manual">{chatSummary.manual} manual</Tag> : null}
+          </div>
+        </div>
+
+        <div className="chat-toolbar">
+          <label className="chat-search">
+            <Search size={17} />
+            <input
+              type="search"
+              value={chatSearch}
+              onChange={(event) => setChatSearch(event.target.value)}
+              placeholder="Buscar cliente, telefone ou mensagem"
+            />
+          </label>
+          <div className="segmented-control" aria-label="Filtrar chats">
+            <button type="button" className={chatFilter === 'all' ? 'active' : ''} onClick={() => setChatFilter('all')}>
+              Todos
+            </button>
+            <button type="button" className={chatFilter === 'needsReply' ? 'active' : ''} onClick={() => setChatFilter('needsReply')}>
+              Responder
+            </button>
+            <button type="button" className={chatFilter === 'manual' ? 'active' : ''} onClick={() => setChatFilter('manual')}>
+              Manual
+            </button>
+          </div>
         </div>
 
         <div className={`clients-layout ${selectedLead ? 'has-selection' : ''}`}>
           <div className="client-list">
-            {leads.length ? (
-              leads.map((lead) => (
-                <button
-                  type="button"
-                  className={`client-row ${selectedClientJid === lead.jid ? 'selected' : ''}`}
-                  key={lead.jid}
-                  onClick={() => setSelectedClientJid(lead.jid)}
-                >
-                  <div className="client-avatar">{(lead.contactName || lead.phone || '?').slice(0, 1)}</div>
-                  <div className="client-main">
-                    <div className="client-heading">
-                      <strong>{lead.contactName || lead.phone}</strong>
-                      <time>{formatTime(lead.lastMessageAt)}</time>
+            {filteredLeads.length ? (
+              filteredLeads.map((lead) => {
+                const conversation = conversations[lead.jid];
+                const paused = isAiPausedForConversation(conversation, lead);
+                const needsReply = leadNeedsReply(conversation);
+
+                return (
+                  <button
+                    type="button"
+                    className={`client-row ${selectedClientJid === lead.jid ? 'selected' : ''} ${needsReply ? 'needs-reply' : ''}`}
+                    key={lead.jid}
+                    onClick={() => setSelectedClientJid(lead.jid)}
+                  >
+                    <div className="client-avatar">{(lead.contactName || lead.phone || '?').slice(0, 1).toUpperCase()}</div>
+                    <div className="client-main">
+                      <div className="client-heading">
+                        <strong>{lead.contactName || lead.phone}</strong>
+                        <time>{formatTime(lead.lastMessageAt)}</time>
+                      </div>
+                      <span>{lead.phone}</span>
+                      <p>{lead.lastMessage || 'Sem mensagens recentes.'}</p>
                     </div>
-                    <span>{lead.phone}</span>
-                    <p>{lead.lastMessage || 'Sem mensagens recentes.'}</p>
-                  </div>
-                  <div className="client-route">
-                    <Tag type={lead.aiPaused ? 'manual' : getLeadTag(lead)}>{lead.aiPaused ? 'Manual' : getLeadLabel(lead)}</Tag>
-                    <small>{lead.aiPaused ? 'IA pausada' : lead.route}</small>
-                  </div>
-                </button>
-              ))
+                    <div className="client-route">
+                      <Tag type={paused ? 'manual' : getLeadTag(lead)}>{paused ? 'Manual' : getLeadLabel(lead)}</Tag>
+                      <small>{needsReply ? 'Responder cliente' : paused ? 'IA pausada' : lead.route}</small>
+                    </div>
+                  </button>
+                );
+              })
             ) : (
-              <p className="empty-state">Nenhum cliente registrado ainda.</p>
+              <p className="empty-state">Nenhum chat encontrado.</p>
             )}
           </div>
 
@@ -743,6 +888,7 @@ export default function App() {
                   <div className="conversation-status">
                     <div className="conversation-tags">
                       <Tag type={getLeadTag(selectedLead)}>{getLeadLabel(selectedLead)}</Tag>
+                      {selectedNeedsReply ? <Tag type="high">Responder</Tag> : null}
                       {selectedAiPaused ? <Tag type="manual">Manual</Tag> : null}
                     </div>
                     <small>{selectedAiPaused ? 'IA pausada' : `${selectedMessages.length} mensagens`}</small>
@@ -759,6 +905,12 @@ export default function App() {
                   </div>
                 </div>
 
+                <div className="conversation-context">
+                  <span>{selectedLead.route || 'Aguardando'}</span>
+                  <span>{selectedLead.messageCount || selectedMessages.length} mensagens</span>
+                  {selectedLastMessage ? <span>Ultima {formatTime(selectedLastMessage.createdAt)}</span> : null}
+                </div>
+
                 <div className="conversation-messages">
                   {selectedMessages.length ? (
                     selectedMessages.map((message) => (
@@ -773,7 +925,31 @@ export default function App() {
                   ) : (
                     <p className="empty-state">Sem historico salvo para este cliente.</p>
                   )}
+                  <span ref={messagesEndRef} />
                 </div>
+
+                <form className="message-composer" onSubmit={sendManualMessage}>
+                  <textarea
+                    value={manualMessage}
+                    onChange={(event) => setManualMessage(event.target.value)}
+                    placeholder={`Mensagem para ${selectedLead.contactName || selectedLead.phone || 'cliente'}`}
+                    disabled={!connected || sendingMessage}
+                    rows={3}
+                  />
+                  <div className="composer-footer">
+                    <span>
+                      {!connected
+                        ? `${connectionLabel} precisa estar conectado.`
+                        : selectedAiPaused
+                          ? 'Atendimento manual ativo.'
+                          : 'Ao enviar, a IA sera pausada para este cliente.'}
+                    </span>
+                    <button type="submit" className="primary-action send-message-button" disabled={!canSendManualMessage}>
+                      <Send size={18} />
+                      {sendingMessage ? 'Enviando' : 'Enviar'}
+                    </button>
+                  </div>
+                </form>
               </>
             ) : (
               <div className="conversation-empty">
