@@ -112,6 +112,43 @@ async function writeJson(filePath, data) {
   await fs.writeFile(filePath, JSON.stringify(data, null, 2));
 }
 
+function toTime(value) {
+  const time = new Date(value || 0).getTime();
+  return Number.isNaN(time) ? 0 : time;
+}
+
+function mergeConversations(localConversations = {}, remoteConversations = {}) {
+  const merged = { ...remoteConversations };
+
+  for (const [jid, localConversation] of Object.entries(localConversations || {})) {
+    const remoteConversation = merged[jid];
+    if (!remoteConversation || toTime(localConversation?.updatedAt) > toTime(remoteConversation?.updatedAt)) {
+      merged[jid] = localConversation;
+    }
+  }
+
+  return merged;
+}
+
+function mergeEvents(localEvents = [], remoteEvents = []) {
+  const eventsById = new Map();
+
+  for (const event of [...remoteEvents, ...localEvents]) {
+    if (!event?.id) {
+      continue;
+    }
+
+    const current = eventsById.get(event.id);
+    if (!current || toTime(event.createdAt) >= toTime(current.createdAt)) {
+      eventsById.set(event.id, event);
+    }
+  }
+
+  return [...eventsById.values()]
+    .sort((a, b) => toTime(b.createdAt) - toTime(a.createdAt))
+    .slice(0, 2500);
+}
+
 export class AutomationStore {
   constructor({ conversationsTable = DEFAULT_CONVERSATIONS_TABLE, dataDir, eventsTable = DEFAULT_EVENTS_TABLE, supabase } = {}) {
     this.automationsPath = path.join(dataDir, 'automations.json');
@@ -119,11 +156,13 @@ export class AutomationStore {
     this.eventsPath = path.join(dataDir, 'events.json');
     this.conversationsTable = conversationsTable;
     this.eventsTable = eventsTable;
-    this.remoteStorageDisabled = false;
     this.supabase = supabase;
     this.automations = [];
     this.conversations = {};
     this.events = [];
+    this.lastRemoteDashboardError = null;
+    this.lastRemoteDashboardSyncedAt = null;
+    this.remoteDashboardLoadPromise = null;
     this.ready = this.load();
   }
 
@@ -131,7 +170,7 @@ export class AutomationStore {
     this.automations = await ensureJsonFile(this.automationsPath, DEFAULT_AUTOMATIONS);
     this.conversations = await ensureJsonFile(this.conversationsPath, {});
     this.events = await ensureJsonFile(this.eventsPath, []);
-    await this.loadRemoteDashboardData();
+    await this.syncRemoteDashboardData();
   }
 
   async saveAutomations() {
@@ -139,22 +178,36 @@ export class AutomationStore {
   }
 
   get hasRemoteStorage() {
-    return Boolean(!this.remoteStorageDisabled && this.supabase?.isReady);
+    return Boolean(this.supabase?.isReady);
   }
 
   getRemoteClient() {
     return this.supabase.getClient();
   }
 
+  async syncRemoteDashboardData() {
+    if (!this.supabase?.isReady) {
+      return false;
+    }
+
+    if (!this.remoteDashboardLoadPromise) {
+      this.remoteDashboardLoadPromise = this.loadRemoteDashboardData().finally(() => {
+        this.remoteDashboardLoadPromise = null;
+      });
+    }
+
+    return this.remoteDashboardLoadPromise;
+  }
+
   async loadRemoteDashboardData() {
     if (!this.supabase?.isReady) {
-      return;
+      return false;
     }
 
     try {
       const client = this.getRemoteClient();
       const [{ data: conversations, error: conversationsError }, { data: events, error: eventsError }] = await Promise.all([
-        client.from(this.conversationsTable).select('*'),
+        client.from(this.conversationsTable).select('*').order('updated_at', { ascending: false }),
         client.from(this.eventsTable).select('*').order('created_at', { ascending: false }).limit(2500),
       ]);
 
@@ -162,11 +215,24 @@ export class AutomationStore {
         throw conversationsError || eventsError;
       }
 
-      this.conversations = Object.fromEntries((conversations || []).map((row) => [row.jid, fromConversationRow(row)]));
-      this.events = (events || []).map(fromEventRow);
+      const remoteConversations = Object.fromEntries((conversations || []).map((row) => [row.jid, fromConversationRow(row)]));
+      const remoteEvents = (events || []).map(fromEventRow);
+
+      this.conversations = mergeConversations(this.conversations, remoteConversations);
+      this.events = mergeEvents(this.events, remoteEvents);
+      this.lastRemoteDashboardError = null;
+      this.lastRemoteDashboardSyncedAt = new Date().toISOString();
+
+      await Promise.all([
+        writeJson(this.conversationsPath, this.conversations),
+        writeJson(this.eventsPath, this.events),
+      ]);
+
+      return true;
     } catch (error) {
-      this.remoteStorageDisabled = true;
+      this.lastRemoteDashboardError = error.message;
       console.warn(`Dashboard remoto indisponivel. Usando armazenamento local: ${error.message}`);
+      return false;
     }
   }
 
@@ -184,7 +250,6 @@ export class AutomationStore {
         throw error;
       }
     } catch (error) {
-      this.remoteStorageDisabled = true;
       console.warn(`Falha ao salvar conversa no banco. Mantendo local: ${error.message}`);
     }
   }
@@ -201,7 +266,6 @@ export class AutomationStore {
         throw error;
       }
     } catch (error) {
-      this.remoteStorageDisabled = true;
       console.warn(`Falha ao salvar evento no banco. Mantendo local: ${error.message}`);
     }
   }

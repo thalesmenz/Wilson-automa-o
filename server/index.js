@@ -191,6 +191,10 @@ function broadcastConversations() {
   io.emit('conversations', store.getConversations());
 }
 
+async function syncDashboardStore() {
+  await store.syncRemoteDashboardData?.();
+}
+
 whatsapp.on('state', (state) => io.emit('status', state));
 whatsapp.on('qr', (payload) => io.emit('qr', payload));
 whatsapp.on('message', () => broadcastConversations());
@@ -536,7 +540,8 @@ app.delete('/api/automations/:id', async (req, res) => {
   res.status(204).end();
 });
 
-app.get('/api/conversations', (_req, res) => {
+app.get('/api/conversations', async (_req, res) => {
+  await syncDashboardStore();
   res.json(store.getConversations());
 });
 
@@ -547,6 +552,9 @@ app.post('/api/conversations/:jid/messages', async (req, res) => {
     const jid = String(req.params.jid || '').trim();
     const text = String(req.body?.text || '').trim();
     const pauseAi = req.body?.pauseAi !== false;
+
+    await syncDashboardStore();
+
     const current = store.getConversation(jid);
     const contactName = current?.contactName || jid;
 
@@ -619,15 +627,18 @@ app.patch('/api/conversations/:jid/ai', async (req, res) => {
   }
 });
 
-app.get('/api/dashboard/summary', (_req, res) => {
+app.get('/api/dashboard/summary', async (_req, res) => {
+  await syncDashboardStore();
   res.json(store.getDashboardSummary());
 });
 
-app.get('/api/leads', (_req, res) => {
+app.get('/api/leads', async (_req, res) => {
+  await syncDashboardStore();
   res.json(store.getLeads());
 });
 
-app.get('/api/events', (req, res) => {
+app.get('/api/events', async (req, res) => {
+  await syncDashboardStore();
   res.json(
     store.getEvents({
       limit: req.query?.limit || 250,
@@ -638,6 +649,8 @@ app.get('/api/events', (req, res) => {
 
 app.get('/api/appointments', async (req, res) => {
   try {
+    await syncDashboardStore();
+
     const defaultFrom = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
     const from = req.query?.from || defaultFrom;
     const status = req.query?.status;
@@ -662,6 +675,8 @@ app.get('/api/appointments', async (req, res) => {
 
 app.get('/api/followups', async (_req, res) => {
   try {
+    await syncDashboardStore();
+
     const upcoming = await appointmentStore.listUpcomingAppointments();
     const recent = store
       .getEvents({ limit: 80 })
@@ -701,6 +716,10 @@ io.on('connection', (socket) => {
   socket.emit('automations', store.getAutomations());
   socket.emit('conversations', store.getConversations());
   socket.emit('activity:init', activity);
+
+  store.syncRemoteDashboardData?.()
+    .then(() => socket.emit('conversations', store.getConversations()))
+    .catch(() => null);
 });
 
 if (process.env.NODE_ENV === 'production') {

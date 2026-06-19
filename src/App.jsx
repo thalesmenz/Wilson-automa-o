@@ -520,6 +520,7 @@ export default function App() {
     socket.on('activity:init', setActivity);
     socket.on('conversations', (payload) => {
       setConversations(payload && typeof payload === 'object' ? payload : {});
+      refreshDashboard().catch(() => null);
     });
     socket.on('activity', (item) => {
       setActivity((current) => [item, ...current].slice(0, 8));
