@@ -395,6 +395,40 @@ app.post('/api/meta/waba-subscriptions', requireDiagnosticsAccess, async (req, r
   }
 });
 
+app.get('/api/meta/business-profile', requireDiagnosticsAccess, async (_req, res) => {
+  try {
+    res.json(await metaWhatsapp.getBusinessProfile());
+  } catch (error) {
+    res.status(error.status || 500).json({
+      error: error.message,
+      meta: error.meta || null,
+    });
+  }
+});
+
+app.post(
+  '/api/meta/profile-picture',
+  requireDiagnosticsAccess,
+  express.raw({ limit: '5mb', type: ['image/png', 'image/jpeg', 'image/jpg'] }),
+  async (req, res) => {
+    try {
+      res.json(
+        await metaWhatsapp.updateProfilePicture({
+          appId: req.query?.appId || req.get('x-meta-app-id'),
+          buffer: req.body,
+          fileName: req.query?.fileName || req.get('x-file-name') || 'profile-picture.png',
+          fileType: req.get('content-type'),
+        }),
+      );
+    } catch (error) {
+      res.status(error.status || 400).json({
+        error: error.message,
+        meta: error.meta || null,
+      });
+    }
+  },
+);
+
 app.post('/api/meta/register-phone', requireDiagnosticsAccess, async (req, res) => {
   try {
     res.json(await metaWhatsapp.registerPhoneNumber(req.body?.pin));

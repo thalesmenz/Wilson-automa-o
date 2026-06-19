@@ -16,6 +16,7 @@ const AUDIO_TRANSCRIPTION_MAX_CHARS = Number.isFinite(configuredAudioTranscriptM
 const UNSUPPORTED_MESSAGE_REPLY =
   process.env.META_WHATSAPP_UNSUPPORTED_MESSAGE_REPLY ||
   'Recebi sua mensagem, mas consigo processar melhor quando vem em texto. Pode me mandar em texto?';
+const DEFAULT_META_APP_ID = process.env.META_APP_ID || process.env.META_WHATSAPP_APP_ID || process.env.FACEBOOK_APP_ID || '';
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -54,6 +55,28 @@ function normalizeMetaObjectId(value, label = 'ID') {
 
   if (!/^\d+$/.test(cleanValue)) {
     throw new Error(`Informe um ${label} valido.`);
+  }
+
+  return cleanValue;
+}
+
+function normalizeUploadFileName(value, fallback = 'profile-picture.png') {
+  const cleanValue = String(value || fallback)
+    .trim()
+    .replace(/[^\w.\-]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+
+  return cleanValue || fallback;
+}
+
+function normalizeImageMimeType(value) {
+  const cleanValue = String(value || '').split(';')[0].trim().toLowerCase();
+  if (cleanValue === 'image/jpg') {
+    return 'image/jpeg';
+  }
+
+  if (cleanValue !== 'image/jpeg' && cleanValue !== 'image/png') {
+    throw new Error('Envie uma imagem PNG ou JPEG para a foto de perfil.');
   }
 
   return cleanValue;
@@ -543,6 +566,97 @@ export class MetaWhatsAppClient extends WhatsAppClient {
     return this.requestMetaForm(`${this.getWabaId(wabaId)}/subscribed_apps`, {
       subscribed_fields: normalizeSubscribedFields(fields).join(','),
     });
+  }
+
+  async getBusinessProfile(fields = 'about,address,description,email,profile_picture_url,websites,vertical') {
+    return this.requestMetaGet(`${this.phoneNumberId}/whatsapp_business_profile?fields=${encodeURIComponent(fields)}`);
+  }
+
+  async createUploadSession({ appId = DEFAULT_META_APP_ID, fileLength, fileName, fileType }) {
+    const cleanAppId = normalizeMetaObjectId(appId, 'App ID');
+    const params = new URLSearchParams({
+      access_token: this.accessToken,
+      file_length: String(fileLength),
+      file_name: normalizeUploadFileName(fileName),
+      file_type: normalizeImageMimeType(fileType),
+    });
+    const response = await fetch(this.getGraphUrl(`${cleanAppId}/uploads?${params.toString()}`), {
+      method: 'POST',
+    });
+    const body = await response.json().catch(() => ({}));
+
+    if (!response.ok || !body?.id) {
+      const message = body?.error?.message || `Meta Graph API retornou HTTP ${response.status}.`;
+      const error = new Error(message);
+      error.status = response.status;
+      error.meta = body;
+      throw error;
+    }
+
+    return body.id;
+  }
+
+  async uploadProfilePictureBinary({ appId = DEFAULT_META_APP_ID, buffer, fileName = 'profile-picture.png', fileType }) {
+    const imageBuffer = Buffer.isBuffer(buffer) ? buffer : Buffer.from(buffer || '');
+    if (!imageBuffer.length) {
+      throw new Error('Imagem da foto de perfil vazia.');
+    }
+
+    const cleanFileType = normalizeImageMimeType(fileType);
+    const uploadSessionId = await this.createUploadSession({
+      appId,
+      fileLength: imageBuffer.length,
+      fileName,
+      fileType: cleanFileType,
+    });
+
+    const response = await fetch(this.getGraphUrl(uploadSessionId), {
+      method: 'POST',
+      headers: {
+        Authorization: `OAuth ${this.accessToken}`,
+        'Content-Type': cleanFileType,
+        file_offset: '0',
+      },
+      body: imageBuffer,
+    });
+    const body = await response.json().catch(() => ({}));
+
+    if (!response.ok || !body?.h) {
+      const message = body?.error?.message || `Meta Graph API retornou HTTP ${response.status}.`;
+      const error = new Error(message);
+      error.status = response.status;
+      error.meta = body;
+      throw error;
+    }
+
+    return body.h;
+  }
+
+  async updateBusinessProfile(payload = {}) {
+    return this.requestMeta(`${this.phoneNumberId}/whatsapp_business_profile`, {
+      messaging_product: 'whatsapp',
+      ...payload,
+    });
+  }
+
+  async updateProfilePicture({ appId = DEFAULT_META_APP_ID, buffer, fileName, fileType }) {
+    const profilePictureHandle = await this.uploadProfilePictureBinary({
+      appId,
+      buffer,
+      fileName,
+      fileType,
+    });
+
+    const update = await this.updateBusinessProfile({
+      profile_picture_handle: profilePictureHandle,
+    });
+    const profile = await this.getBusinessProfile();
+
+    return {
+      profile,
+      profilePictureHandleEnding: String(profilePictureHandle).slice(-12),
+      success: Boolean(update?.success),
+    };
   }
 
   async registerPhoneNumber(pin) {
