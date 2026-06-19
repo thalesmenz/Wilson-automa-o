@@ -185,6 +185,25 @@ export class AutomationStore {
     return this.supabase.getClient();
   }
 
+  getDashboardStorageStatus() {
+    const configured = Boolean(this.supabase?.isReady);
+
+    return {
+      active: configured && !this.lastRemoteDashboardError,
+      configured,
+      conversations: Object.keys(this.conversations || {}).length,
+      enabled: configured,
+      events: this.events.length,
+      lastError: this.lastRemoteDashboardError,
+      lastSyncedAt: this.lastRemoteDashboardSyncedAt,
+      provider: 'Supabase',
+      tables: {
+        conversations: this.conversationsTable,
+        events: this.eventsTable,
+      },
+    };
+  }
+
   async syncRemoteDashboardData() {
     if (!this.supabase?.isReady) {
       return false;

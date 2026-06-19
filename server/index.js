@@ -191,11 +191,18 @@ function broadcastConversations() {
   io.emit('conversations', store.getConversations());
 }
 
+function getAppStatus() {
+  return {
+    ...whatsapp.getState(),
+    dashboardStorage: store.getDashboardStorageStatus?.() || null,
+  };
+}
+
 async function syncDashboardStore() {
   await store.syncRemoteDashboardData?.();
 }
 
-whatsapp.on('state', (state) => io.emit('status', state));
+whatsapp.on('state', () => io.emit('status', getAppStatus()));
 whatsapp.on('qr', (payload) => io.emit('qr', payload));
 whatsapp.on('message', () => broadcastConversations());
 whatsapp.on('automation:reply', () => broadcastConversations());
@@ -217,8 +224,9 @@ app.get('/api/health', (_req, res) => {
   res.json({ ok: true, service: 'whatsapp-automation' });
 });
 
-app.get('/api/status', (_req, res) => {
-  res.json(whatsapp.getState());
+app.get('/api/status', async (_req, res) => {
+  await syncDashboardStore();
+  res.json(getAppStatus());
 });
 
 app.get('/api/meta/webhook', (req, res) => {
@@ -266,7 +274,7 @@ app.get('/api/google/callback', async (req, res) => {
       state: req.query?.state,
     });
 
-    io.emit('status', whatsapp.getState());
+    io.emit('status', getAppStatus());
 
     res.type('html').send(`<!doctype html>
 <html lang="pt-BR">
@@ -327,7 +335,7 @@ app.get('/api/google/events/:eventId', requireDiagnosticsAccess, async (req, res
 app.post('/api/google/disconnect', async (req, res) => {
   try {
     const result = await calendar.disconnectOAuth({ leadType: req.body?.leadType });
-    const state = whatsapp.getState();
+    const state = getAppStatus();
 
     io.emit('status', state);
     addActivity({
@@ -346,8 +354,8 @@ app.post('/api/google/disconnect', async (req, res) => {
 
 app.post('/api/whatsapp/connect', async (_req, res) => {
   try {
-    const state = await whatsapp.connect();
-    res.json(state);
+    await whatsapp.connect();
+    res.json(getAppStatus());
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -456,8 +464,8 @@ app.post('/api/whatsapp/disconnect', async (req, res) => {
       return;
     }
 
-    const state = await whatsapp.disconnect({ clearSession });
-    res.json(state);
+    await whatsapp.disconnect({ clearSession });
+    res.json(getAppStatus());
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -466,7 +474,7 @@ app.post('/api/whatsapp/disconnect', async (req, res) => {
 app.put('/api/whatsapp/provider', async (req, res) => {
   try {
     const provider = normalizeWhatsappProvider(req.body?.provider);
-    const state = whatsapp.setActiveProvider(provider);
+    whatsapp.setActiveProvider(provider);
 
     settings.whatsappProvider = provider;
     await writeSettings(settings);
@@ -478,7 +486,7 @@ app.put('/api/whatsapp/provider', async (req, res) => {
       createdAt: new Date().toISOString(),
     });
 
-    res.json(state);
+    res.json(getAppStatus());
   } catch (error) {
     res.status(400).json({ error: error.message });
   }
@@ -693,7 +701,7 @@ app.post('/api/followups/toggle', async (req, res) => {
   const followups = reminderWorker.setEnabled(enabled);
   settings.followupsEnabled = enabled;
   await writeSettings(settings);
-  const state = whatsapp.getState();
+  const state = getAppStatus();
 
   io.emit('status', state);
   addActivity({
@@ -708,17 +716,20 @@ app.post('/api/followups/toggle', async (req, res) => {
 });
 
 app.get('/api/connections', (_req, res) => {
-  res.json(whatsapp.getState());
+  res.json(getAppStatus());
 });
 
 io.on('connection', (socket) => {
-  socket.emit('status', whatsapp.getState());
+  socket.emit('status', getAppStatus());
   socket.emit('automations', store.getAutomations());
   socket.emit('conversations', store.getConversations());
   socket.emit('activity:init', activity);
 
   store.syncRemoteDashboardData?.()
-    .then(() => socket.emit('conversations', store.getConversations()))
+    .then(() => {
+      socket.emit('status', getAppStatus());
+      socket.emit('conversations', store.getConversations());
+    })
     .catch(() => null);
 });
 

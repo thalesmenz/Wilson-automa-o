@@ -394,6 +394,8 @@ export default function App() {
   const followupsEnabled = Boolean(status.followups?.enabled);
   const followupsTone = getConnectionTone(followupsEnabled, followupsConfigured);
   const connectionTone = getConnectionTone(connected, hasQr, status.status === 'connecting');
+  const dashboardStorage = status.dashboardStorage || {};
+  const dashboardStorageError = dashboardStorage.configured && dashboardStorage.lastError ? dashboardStorage.lastError : '';
   const botLabel = isMetaProvider
     ? connected
       ? 'Meta ativa'
@@ -1337,6 +1339,7 @@ export default function App() {
 
         {notice ? <p className="notice">{notice}</p> : null}
         {status.lastError ? <p className="error-text">{status.lastError}</p> : null}
+        {dashboardStorageError ? <p className="error-text">Banco de clientes indisponivel: {dashboardStorageError}</p> : null}
 
         {activeView === 'overview' ? renderOverview() : null}
         {activeView === 'clients' ? renderClients() : null}
