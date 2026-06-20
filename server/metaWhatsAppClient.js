@@ -222,11 +222,22 @@ function buildQuickReplyMessage(text, buttons, { keepNumberedOptions = false } =
 function getQuickReplyForText(text) {
   const normalized = normalizeQuickReplyText(text);
 
-  if (normalized.includes('me conta: o que voce precisa resolver hoje?')) {
+  if (
+    normalized.includes('me conta: seu atendimento e para qual caso?') ||
+    normalized.includes('me conta: o que voce precisa resolver hoje?')
+  ) {
     return buildQuickReplyMessage(text, [
-      { id: '1', title: 'Consulta R$150' },
-      { id: '2', title: 'Como funciona' },
-      { id: '3', title: 'Urgente hoje' },
+      { id: '1', title: 'CPF' },
+      { id: '2', title: 'CNPJ' },
+      { id: '3', title: 'Como funciona?' },
+    ]);
+  }
+
+  if (normalized.includes('gostaria de uma consulta?') && normalized.includes('investimento: r$150')) {
+    return buildQuickReplyMessage(text, [
+      { id: '1', title: 'CPF' },
+      { id: '2', title: 'CNPJ' },
+      { id: '3', title: 'Sem interesse' },
     ]);
   }
 
@@ -254,11 +265,11 @@ function getQuickReplyForText(text) {
     ]);
   }
 
-  if (normalized.includes('qual e a area de atuacao do cnpj?')) {
+  if (normalized.includes('qual sua area de atuacao?') || normalized.includes('qual e a area de atuacao do cnpj?')) {
     return buildQuickReplyMessage(text, [
       { id: '1', title: 'Agro' },
-      { id: '2', title: 'Comércio/serv.' },
-      { id: '4', title: 'Outra área' },
+      { id: '2', title: 'Outros' },
+      { id: '3', title: 'Voltar' },
     ]);
   }
 

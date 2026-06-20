@@ -87,14 +87,16 @@ const INITIAL_APPROACH_MESSAGE =
   '✅ Devolutiva de cheque\n' +
   '✅ Cadin\n' +
   '✅ CPF e CNPJ\n' +
-  'Me conta: o que você precisa resolver hoje?\n' +
+  'Me conta: seu atendimento é para qual caso?\n' +
   'Responda com o número:\n' +
-  '1 – Quero uma consulta técnica na plataforma pra entender minha real situação de dívidas (investimento: R$150)\n' +
-  '2 – Só quero entender como funciona\n' +
-  '3 – É urgente 🚨 preciso resolver hoje (me passa seu número que eu te ligo pra alinharmos ☎️)';
+  '1. CPF\n' +
+  '2. CNPJ\n' +
+  '3. Como funciona?';
 const configuredAutoReplyText = process.env.AUTO_REPLY_TEXT;
 const AUTO_REPLY_TEXT =
-  configuredAutoReplyText && configuredAutoReplyText !== LEGACY_INITIAL_APPROACH_MESSAGE
+  configuredAutoReplyText &&
+  configuredAutoReplyText !== LEGACY_INITIAL_APPROACH_MESSAGE &&
+  !configuredAutoReplyText.includes('Me conta: o que você precisa resolver hoje?')
     ? configuredAutoReplyText
     : INITIAL_APPROACH_MESSAGE;
 
@@ -113,7 +115,7 @@ const MAX_AI_HISTORY_TEXT_LENGTH = 500;
 const DEFAULT_MEETING_DURATION_MINUTES = Number(process.env.GOOGLE_CALENDAR_EVENT_DURATION_MINUTES || 30);
 const GOOGLE_CALENDAR_TIME_ZONE = process.env.GOOGLE_CALENDAR_TIME_ZONE || 'America/Sao_Paulo';
 const ANALYSIS_FEES = {
-  high_ticket: 250,
+  high_ticket: 150,
   low_ticket: 150,
 };
 const LEAD_TYPE_LABELS = {
@@ -395,8 +397,12 @@ function buildDocumentTypeMessage() {
   return INITIAL_APPROACH_MESSAGE;
 }
 
+function buildInitialHowItWorksMessage() {
+  return 'A consulta de rating bancário é uma análise especializada que busca identificar possíveis fatores que podem influenciar a concessão de crédito por instituições financeiras.\n\nPor meio dessa avaliação, é possível verificar informações que podem impactar solicitações de financiamento, empréstimos, cartões de crédito e aumento de limite, mesmo quando não há restrições de crédito aparentes.\n\nGostaria de uma consulta? (investimento: R$150)\n\n1. CPF\n2. CNPJ\n3. Sem interesse';
+}
+
 function buildSegmentMessage() {
-  return 'Perfeito. Qual é a área de atuação do CNPJ?\n\n1. Agro\n2. Comércio ou serviços\n3. Indústria\n4. Outro segmento';
+  return 'Perfeito, qual sua área de atuação?\n\n1. Agro\n2. Outros\n3. Voltar';
 }
 
 function isCpfDocumentTypeText(text) {
@@ -418,9 +424,13 @@ function isAgroSegmentText(text) {
 
 function isNonAgroSegmentText(text) {
   const normalized = normalizeText(text);
-  return /\b(comercio|servicos|servico|industria|outro segmento|lojista|autonomo|autonoma)\b/.test(
+  return /\b(comercio|servicos|servico|industria|outro|outros|outro segmento|lojista|autonomo|autonoma)\b/.test(
     normalized,
   );
+}
+
+function isBackRequest(text) {
+  return /^(voltar|volta|retornar|retorna|menu anterior)$/i.test(normalizeText(text));
 }
 
 function isConfirmation(text) {
@@ -788,11 +798,11 @@ function buildPreferredMissingScheduleMessage(missing) {
   const needsPhone = missing.includes('telefone para ligação');
 
   if (needsSchedule && needsPhone) {
-    return 'Perfeito. A Cresce Mais quer te dar um atendimento preferencial.\n\nMe envie um dia e horário de preferência e confirme o telefone com DDD para a ligação.';
+    return 'Perfeito. A Cresce Mais quer te dar um atendimento preferencial.\n\nQual horário podemos conversar? Também me confirme o telefone com DDD para a ligação.';
   }
 
   if (needsSchedule) {
-    return 'Perfeito. A Cresce Mais quer te dar um atendimento preferencial.\n\nMe envie um dia e horário de preferência para a ligação.';
+    return 'Perfeito. A Cresce Mais quer te dar um atendimento preferencial.\n\nQual horário podemos conversar?';
   }
 
   if (needsPhone) {
@@ -802,7 +812,9 @@ function buildPreferredMissingScheduleMessage(missing) {
   return 'Perfeito. A Cresce Mais quer te dar um atendimento preferencial.';
 }
 
-function buildPreferredAgroData(current = {}, next = {}) {
+function buildPreferredCnpjData(current = {}, next = {}) {
+  const segment = next.segment || current.segment || 'other';
+
   return normalizeSchedulePhone(
     mergeScheduleData(current, {
       analysisAccepted: true,
@@ -810,15 +822,25 @@ function buildPreferredAgroData(current = {}, next = {}) {
       durationMinutes: DEFAULT_MEETING_DURATION_MINUTES,
       leadType: 'high_ticket',
       meetingChannel: 'phone',
-      notes: 'Atendimento preferencial Cresce Mais para lead do agro.',
+      notes:
+        segment === 'agro'
+          ? 'Atendimento preferencial Cresce Mais para lead do agro.'
+          : 'Atendimento preferencial Cresce Mais para CNPJ.',
       paymentAmount: null,
       phoneCallAccepted: true,
-      preferredService: 'agro',
-      segment: 'agro',
+      preferredService: segment === 'agro' ? 'agro' : 'cnpj',
+      segment,
       title: 'Atendimento preferencial Cresce Mais',
       ...next,
     }),
   );
+}
+
+function buildPreferredAgroData(current = {}, next = {}) {
+  return buildPreferredCnpjData(current, {
+    segment: 'agro',
+    ...next,
+  });
 }
 
 function getLaterSlotsSearchDate(slots = []) {
@@ -897,7 +919,7 @@ function buildAnalysisOfferMessage(data) {
   const leadType = normalizeLeadType(data.leadType);
 
   if (leadType === 'high_ticket') {
-    return 'Perfeito. Para rating bancário baixo, fazemos uma consulta completa para identificar por que o banco não aprova financiamento, limite ou crédito. O valor da consulta é R$250.\n\n1. Quero seguir com a consulta\n2. Quero entender melhor antes\n3. Não quero pagar agora';
+    return 'Perfeito. Para rating bancário baixo, fazemos uma consulta completa para identificar por que o banco não aprova financiamento, limite ou crédito. O valor da consulta é R$150.\n\n1. Quero seguir com a consulta\n2. Quero entender melhor antes\n3. Não quero pagar agora';
   }
 
   if (leadType === 'low_ticket') {
@@ -934,7 +956,7 @@ function buildUnknownProblemOfferMessage() {
 }
 
 function buildGeneralQuestionOfferMessage() {
-  return 'Consigo te orientar de forma geral, mas para analisar o seu caso com segurança a primeira etapa é a consulta paga.\n\n1. Consulta de negativado - R$150\n2. Consulta do CNPJ - R$250\n3. Não quero pagar agora';
+  return 'Consigo te orientar de forma geral, mas para analisar o seu caso com segurança a primeira etapa é a consulta paga.\n\n1. CPF - consulta R$150\n2. CNPJ - atendimento preferencial\n3. Não quero pagar agora';
 }
 
 function buildEmailRequestMessage() {
@@ -955,6 +977,10 @@ function buildStateFallbackMessage(current) {
 
   if (current?.status === 'awaiting_segment') {
     return buildSegmentMessage();
+  }
+
+  if (current?.status === 'awaiting_how_it_works_choice') {
+    return buildInitialHowItWorksMessage();
   }
 
   if (current?.status === 'awaiting_qualification') {
@@ -2092,6 +2118,21 @@ export class WhatsAppClient extends EventEmitter {
       };
     }
 
+    if (!current && isMoreInfoRequest(text)) {
+      const data = {};
+      await this.setSchedulingState(jid, {
+        data,
+        status: 'awaiting_how_it_works_choice',
+        updatedAt: new Date().toISOString(),
+      }, { contactName });
+
+      return {
+        ...this.defaultReply,
+        name: 'Qualificação',
+        response: buildInitialHowItWorksMessage(),
+      };
+    }
+
     if (!current && (isAgroSegmentText(text) || isNonAgroSegmentText(text))) {
       await this.setSchedulingState(jid, {
         data: {},
@@ -2107,13 +2148,13 @@ export class WhatsAppClient extends EventEmitter {
     }
 
     if (current?.status === 'awaiting_document_type') {
-      if (initialMenuOption === 1) {
+      if (initialMenuOption === 1 || isCpfDocumentTypeText(text)) {
         const data = mergeScheduleData(current.data, {
           analysisAccepted: true,
           documentType: current.data?.documentType || 'cpf',
           leadConfidence: 1,
           leadType: 'low_ticket',
-          notes: 'Cliente escolheu consulta técnica de R$150 no menu inicial.',
+          notes: 'Cliente escolheu atendimento para CPF no menu inicial.',
           paymentAmount: 150,
           segment: current.data?.segment || 'person',
         });
@@ -2129,94 +2170,17 @@ export class WhatsAppClient extends EventEmitter {
         });
       }
 
-      if (initialMenuOption === 2) {
-        const data = mergeScheduleData(current.data, {
-          analysisAccepted: false,
-          documentType: current.data?.documentType || 'cpf',
-          leadConfidence: 0.7,
-          leadType: 'low_ticket',
-          menu: 'analysis_details',
-          paymentAmount: 150,
-          segment: current.data?.segment || 'person',
-        });
-
-        await this.setSchedulingState(
-          jid,
-          {
-            data,
-            status: 'awaiting_payment_confirmation',
-            updatedAt: new Date().toISOString(),
-          },
-          { contactName },
-        );
-
-        return {
-          ...this.defaultReply,
-          name: 'Qualificação',
-          response: buildHowItWorksMessage(),
-        };
-      }
-
-      if (initialMenuOption === 3) {
-        return this.createUrgentPhoneReply({ contactName, current, jid, text });
-      }
-
-      if (isCpfDocumentTypeText(text)) {
+      if (initialMenuOption === 2 || isCnpjDocumentTypeText(text)) {
         const data = {
-          ...current.data,
-          documentType: 'cpf',
-          segment: 'person',
-        };
-
-        await this.setSchedulingState(jid, {
-          data,
-          status: 'awaiting_qualification',
-          updatedAt: new Date().toISOString(),
-        });
-
-        return {
-          ...this.defaultReply,
-          name: 'Qualificação',
-          response: buildQualificationMessage(data),
-        };
-      }
-
-      if (isCnpjDocumentTypeText(text)) {
-        const baseData = {
           ...current.data,
           documentType: 'cnpj',
         };
 
-        if (isAgroSegmentText(text)) {
-          const data = normalizeSchedulePhone(buildPreferredAgroData(baseData, phoneCallPreference), { jid, text });
-          return this.createMissingDetailsReply({ data, jid, missing: getScheduleMissing(data) });
-        }
-
-        if (isNonAgroSegmentText(text)) {
-          const normalized = normalizeText(text);
-          const data = {
-            ...baseData,
-            segment: /\b(industria)\b/.test(normalized) ? 'industry' : /\b(comercio|servicos|servico|lojista)\b/.test(normalized) ? 'commerce_services' : 'other',
-          };
-
-          await this.setSchedulingState(jid, {
-            data,
-            status: 'awaiting_qualification',
-            updatedAt: new Date().toISOString(),
-          });
-
-          return {
-            ...this.defaultReply,
-            name: 'Qualificação',
-            response: buildQualificationMessage(data),
-          };
-        }
-
         await this.setSchedulingState(jid, {
-          data: baseData,
+          data,
           status: 'awaiting_segment',
           updatedAt: new Date().toISOString(),
-        });
+        }, { contactName });
 
         return {
           ...this.defaultReply,
@@ -2225,7 +2189,91 @@ export class WhatsAppClient extends EventEmitter {
         };
       }
 
+      if (initialMenuOption === 3 || isMoreInfoRequest(text)) {
+        const data = {
+          ...current.data,
+          menu: 'initial_how_it_works',
+        };
+
+        await this.setSchedulingState(jid, {
+          data,
+          status: 'awaiting_how_it_works_choice',
+          updatedAt: new Date().toISOString(),
+        }, { contactName });
+
+        return {
+          ...this.defaultReply,
+          name: 'Qualificação',
+          response: buildInitialHowItWorksMessage(),
+        };
+      }
+
       return this.createStateFallbackReply({ current });
+    }
+
+    if (current?.status === 'awaiting_how_it_works_choice') {
+      if (menuOption === 1 || isCpfDocumentTypeText(text)) {
+        const data = mergeScheduleData(current.data, {
+          analysisAccepted: true,
+          documentType: 'cpf',
+          leadConfidence: 1,
+          leadType: 'low_ticket',
+          notes: 'Cliente escolheu CPF após entender como funciona.',
+          paymentAmount: 150,
+          segment: 'person',
+        });
+
+        return this.createPaymentAcceptedReply({
+          contactName,
+          current: {
+            ...current,
+            data,
+          },
+          jid,
+          text,
+        });
+      }
+
+      if (menuOption === 2 || isCnpjDocumentTypeText(text)) {
+        const data = {
+          ...current.data,
+          documentType: 'cnpj',
+        };
+
+        await this.setSchedulingState(jid, {
+          data,
+          status: 'awaiting_segment',
+          updatedAt: new Date().toISOString(),
+        }, { contactName });
+
+        return {
+          ...this.defaultReply,
+          name: 'Qualificação',
+          response: buildSegmentMessage(),
+        };
+      }
+
+      if (menuOption === 3 || isCancellation(text)) {
+        await this.clearSchedulingState(jid);
+        await this.recordLeadStatus({
+          contactName,
+          jid,
+          reason: 'Cliente escolheu sem interesse após explicação.',
+          status: 'discarded',
+        });
+
+        return {
+          ...this.defaultReply,
+          name: 'Qualificação',
+          response: buildPaymentRefusalMessage(),
+        };
+      }
+
+      return {
+        ...this.defaultReply,
+        name: 'Qualificação',
+        response: buildInitialHowItWorksMessage(),
+      };
     }
 
     if (current?.status === 'awaiting_urgent_phone') {
@@ -2237,24 +2285,45 @@ export class WhatsAppClient extends EventEmitter {
     }
 
     if (current?.status === 'awaiting_segment') {
-      if (isCpfDocumentTypeText(text)) {
+      if (menuOption === 3 || isBackRequest(text)) {
         const data = {
           ...current.data,
-          documentType: 'cpf',
-          segment: 'person',
+          menu: 'initial_how_it_works',
         };
 
         await this.setSchedulingState(jid, {
           data,
-          status: 'awaiting_qualification',
+          status: 'awaiting_how_it_works_choice',
           updatedAt: new Date().toISOString(),
-        });
+        }, { contactName });
 
         return {
           ...this.defaultReply,
           name: 'Qualificação',
-          response: buildQualificationMessage(data),
+          response: buildInitialHowItWorksMessage(),
         };
+      }
+
+      if (isCpfDocumentTypeText(text)) {
+        const data = mergeScheduleData(current.data, {
+          analysisAccepted: true,
+          documentType: 'cpf',
+          leadConfidence: 1,
+          leadType: 'low_ticket',
+          notes: 'Cliente voltou para CPF durante seleção de segmento.',
+          paymentAmount: 150,
+          segment: 'person',
+        });
+
+        return this.createPaymentAcceptedReply({
+          contactName,
+          current: {
+            ...current,
+            data,
+          },
+          jid,
+          text,
+        });
       }
 
       if (menuOption === 1 || isAgroSegmentText(text)) {
@@ -2278,67 +2347,37 @@ export class WhatsAppClient extends EventEmitter {
         };
       }
 
-      const inferredLeadType = inferLeadTypeFromProblemText(text);
-      if (inferredLeadType || isUnsureAboutProblem(text)) {
-        const leadType = inferredLeadType || 'low_ticket';
-        const data = mergeScheduleData(current.data, {
-          analysisAccepted: false,
-          leadConfidence: inferredLeadType ? 0.85 : 0.7,
-          leadType,
-          notes: inferredLeadType
-            ? 'Cliente informou o problema antes de responder o segmento.'
-            : 'Cliente não sabe exatamente qual é o problema; iniciar pela consulta de negativado.',
-          paymentAmount: ANALYSIS_FEES[leadType],
-          segment: 'unknown',
-        });
+      if (menuOption === 2 || isNonAgroSegmentText(text)) {
+        const data = normalizeSchedulePhone(
+          buildPreferredCnpjData(current.data, {
+            ...phoneCallPreference,
+            segment: 'other',
+          }),
+          { jid, text },
+        );
+        const missing = getScheduleMissing(data);
+
+        if (missing.length) {
+          return this.createMissingDetailsReply({ data, jid, missing });
+        }
 
         await this.setSchedulingState(jid, {
           data,
-          status: 'awaiting_payment_confirmation',
+          status: 'awaiting_confirmation',
           updatedAt: new Date().toISOString(),
         });
 
         return {
           ...this.defaultReply,
-          name: 'Qualificação',
-          response: inferredLeadType ? buildAnalysisOfferMessage(data) : buildUnknownProblemOfferMessage(),
+          name: 'Agenda',
+          response: buildConfirmationMessage(data),
         };
       }
-
-      if ((menuOption && menuOption >= 2 && menuOption <= 4) || isNonAgroSegmentText(text)) {
-        const data = {
-          ...current.data,
-          segment: menuOption === 2 ? 'commerce_services' : menuOption === 3 ? 'industry' : 'other',
-        };
-
-        await this.setSchedulingState(jid, {
-          data,
-          status: 'awaiting_qualification',
-          updatedAt: new Date().toISOString(),
-        });
-
-        return {
-          ...this.defaultReply,
-          name: 'Qualificação',
-          response: buildQualificationMessage(data),
-        };
-      }
-
-      const data = {
-        ...current.data,
-        segment: 'other',
-      };
-
-      await this.setSchedulingState(jid, {
-        data,
-        status: 'awaiting_qualification',
-        updatedAt: new Date().toISOString(),
-      });
 
       return {
         ...this.defaultReply,
         name: 'Qualificação',
-        response: buildQualificationMessage(data),
+        response: buildSegmentMessage(),
       };
     }
 
