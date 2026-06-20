@@ -2190,6 +2190,23 @@ export class WhatsAppClient extends EventEmitter {
       };
     }
 
+    // Primeiro contato: qualquer abertura não reconhecida (e que não seja data/horário
+    // nem cancelamento de cliente já agendado) cai no menu inicial do funil, em vez de
+    // vazar para o fallback da IA com o funil antigo.
+    if (!current && !hasScheduleDetails(text) && !isAppointmentCancellation(text)) {
+      await this.setSchedulingState(jid, {
+        data: {},
+        status: 'awaiting_document_type',
+        updatedAt: new Date().toISOString(),
+      });
+
+      return {
+        ...this.defaultReply,
+        name: 'Qualificação',
+        response: buildDocumentTypeMessage(),
+      };
+    }
+
     if (current?.status === 'awaiting_document_type') {
       if (initialMenuOption === 1 || isCpfDocumentTypeText(text)) {
         return this.createCpfProceedReply({
