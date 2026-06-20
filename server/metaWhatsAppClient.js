@@ -273,6 +273,22 @@ function getQuickReplyForText(text) {
     ]);
   }
 
+  if (normalized.includes('voce quer prosseguir?') && normalized.includes('valor da consulta')) {
+    return buildQuickReplyMessage(text, [
+      { id: '1', title: 'Sim' },
+      { id: '2', title: 'No momento não' },
+      { id: '3', title: 'Como funciona?' },
+    ]);
+  }
+
+  if (normalized.includes('por ligacao ou via meet?')) {
+    return buildQuickReplyMessage(text, [
+      { id: '1', title: 'Ligação' },
+      { id: '2', title: 'Meet' },
+      { id: '3', title: 'Recomeçar' },
+    ]);
+  }
+
   if (normalized.includes('o valor da consulta e r$') && normalized.includes('quero seguir com a consulta')) {
     return buildQuickReplyMessage(text, [
       { id: '1', title: 'Quero seguir' },

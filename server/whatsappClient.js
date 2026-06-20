@@ -405,6 +405,26 @@ function buildSegmentMessage() {
   return 'Perfeito, qual sua área de atuação?\n\n1. Agro\n2. Outros\n3. Voltar';
 }
 
+function buildCpfProceedMessage() {
+  return 'O valor da consulta é de R$150, nosso especialista explicará melhor, você quer prosseguir?\n\n1. Sim\n2. No momento não\n3. Como funciona?';
+}
+
+function buildCpfChannelMessage() {
+  return 'Você prefere conversar com nosso especialista por ligação ou via Meet?\n\n1. Ligação\n2. Meet\n3. Recomeçar';
+}
+
+function isPhoneChoice(text) {
+  return /\b(ligacao|ligar|telefone|fone|zap|whatsapp|chamada|me liga)\b/.test(normalizeText(text));
+}
+
+function isMeetChoice(text) {
+  return /\b(meet|google meet|video|videochamada|videoconferencia|online)\b/.test(normalizeText(text));
+}
+
+function isRestartRequest(text) {
+  return /^(recomecar|recomeca|reiniciar|comecar de novo|do inicio|inicio)$/.test(normalizeText(text));
+}
+
 function isCpfDocumentTypeText(text) {
   const normalized = normalizeText(text);
   return /\b(cpf|pessoa fisica|pf|fisica|meu nome|meu cpf|no cpf|pelo cpf)\b/.test(normalized);
@@ -440,7 +460,7 @@ function isConfirmation(text) {
 }
 
 function isCancellation(text) {
-  return /^(nao|n|nao quero|nao quero pagar|nao quero seguir|nao vou pagar|sem pagar|gratis|gratuito|caro|cancela|cancelar|agora nao|nao agora|deixa|deixa pra la|deixa quieto|vou ver depois|depois eu vejo|sem interesse)$/i.test(
+  return /^(nao|n|nao quero|nao quero pagar|nao quero seguir|nao vou pagar|sem pagar|gratis|gratuito|caro|cancela|cancelar|agora nao|nao agora|no momento nao|momento nao|deixa|deixa pra la|deixa quieto|vou ver depois|depois eu vejo|sem interesse)$/i.test(
     normalizeText(text),
   );
 }
@@ -1937,6 +1957,29 @@ export class WhatsAppClient extends EventEmitter {
     };
   }
 
+  async createCpfProceedReply({ contactName, current, jid, notes }) {
+    const data = mergeScheduleData(current?.data || {}, {
+      documentType: 'cpf',
+      leadConfidence: 1,
+      leadType: 'low_ticket',
+      notes,
+      paymentAmount: 150,
+      segment: 'person',
+    });
+
+    await this.setSchedulingState(jid, {
+      data,
+      status: 'awaiting_cpf_proceed',
+      updatedAt: new Date().toISOString(),
+    }, { contactName });
+
+    return {
+      ...this.defaultReply,
+      name: 'Qualificação',
+      response: buildCpfProceedMessage(),
+    };
+  }
+
   async createPaymentAcceptedReply({ contactName, current, jid, next = {}, text }) {
     const data = normalizeSchedulePhone(mergeScheduleData(current.data, { ...next, analysisAccepted: true }), { jid, text });
     const leadType = normalizeLeadType(data.leadType);
@@ -2149,24 +2192,11 @@ export class WhatsAppClient extends EventEmitter {
 
     if (current?.status === 'awaiting_document_type') {
       if (initialMenuOption === 1 || isCpfDocumentTypeText(text)) {
-        const data = mergeScheduleData(current.data, {
-          analysisAccepted: true,
-          documentType: current.data?.documentType || 'cpf',
-          leadConfidence: 1,
-          leadType: 'low_ticket',
-          notes: 'Cliente escolheu atendimento para CPF no menu inicial.',
-          paymentAmount: 150,
-          segment: current.data?.segment || 'person',
-        });
-
-        return this.createPaymentAcceptedReply({
+        return this.createCpfProceedReply({
           contactName,
-          current: {
-            ...current,
-            data,
-          },
+          current,
           jid,
-          text,
+          notes: 'Cliente escolheu atendimento para CPF no menu inicial.',
         });
       }
 
@@ -2213,24 +2243,11 @@ export class WhatsAppClient extends EventEmitter {
 
     if (current?.status === 'awaiting_how_it_works_choice') {
       if (menuOption === 1 || isCpfDocumentTypeText(text)) {
-        const data = mergeScheduleData(current.data, {
-          analysisAccepted: true,
-          documentType: 'cpf',
-          leadConfidence: 1,
-          leadType: 'low_ticket',
-          notes: 'Cliente escolheu CPF após entender como funciona.',
-          paymentAmount: 150,
-          segment: 'person',
-        });
-
-        return this.createPaymentAcceptedReply({
+        return this.createCpfProceedReply({
           contactName,
-          current: {
-            ...current,
-            data,
-          },
+          current,
           jid,
-          text,
+          notes: 'Cliente escolheu CPF após entender como funciona.',
         });
       }
 
@@ -2276,6 +2293,121 @@ export class WhatsAppClient extends EventEmitter {
       };
     }
 
+    if (current?.status === 'awaiting_cpf_proceed') {
+      if (menuOption === 1 || isPaymentAcceptance(text)) {
+        await this.setSchedulingState(jid, {
+          data: current.data,
+          status: 'awaiting_cpf_channel',
+          updatedAt: new Date().toISOString(),
+        });
+
+        return {
+          ...this.defaultReply,
+          name: 'Agenda',
+          response: buildCpfChannelMessage(),
+        };
+      }
+
+      if (menuOption === 3 || isMoreInfoRequest(text)) {
+        const data = {
+          ...current.data,
+          menu: 'initial_how_it_works',
+        };
+
+        await this.setSchedulingState(jid, {
+          data,
+          status: 'awaiting_how_it_works_choice',
+          updatedAt: new Date().toISOString(),
+        }, { contactName });
+
+        return {
+          ...this.defaultReply,
+          name: 'Qualificação',
+          response: buildInitialHowItWorksMessage(),
+        };
+      }
+
+      if (menuOption === 2 || isCancellation(text)) {
+        await this.clearSchedulingState(jid);
+        await this.recordLeadStatus({
+          contactName,
+          jid,
+          reason: 'Cliente não quis prosseguir com a consulta no momento.',
+          status: 'discarded',
+        });
+
+        return {
+          ...this.defaultReply,
+          name: 'Qualificação',
+          response: buildPaymentRefusalMessage(),
+        };
+      }
+
+      return {
+        ...this.defaultReply,
+        name: 'Qualificação',
+        response: buildCpfProceedMessage(),
+      };
+    }
+
+    if (current?.status === 'awaiting_cpf_channel') {
+      if (menuOption === 3 || isRestartRequest(text) || isBackRequest(text)) {
+        await this.setSchedulingState(jid, {
+          data: {},
+          status: 'awaiting_document_type',
+          updatedAt: new Date().toISOString(),
+        });
+
+        return {
+          ...this.defaultReply,
+          name: 'Qualificação',
+          response: buildDocumentTypeMessage(),
+        };
+      }
+
+      if (menuOption === 1 || isPhoneChoice(text)) {
+        const data = mergeScheduleData(current.data, {
+          analysisAccepted: true,
+          meetingChannel: 'phone',
+          phoneCallAccepted: true,
+        });
+
+        return this.createPaymentAcceptedReply({
+          contactName,
+          current: {
+            ...current,
+            data,
+          },
+          jid,
+          text,
+        });
+      }
+
+      if (menuOption === 2 || isMeetChoice(text)) {
+        const data = mergeScheduleData(current.data, {
+          analysisAccepted: true,
+          meetingChannel: 'email',
+          phoneCallAccepted: false,
+        });
+
+        return this.createPaymentAcceptedReply({
+          contactName,
+          current: {
+            ...current,
+            data,
+          },
+          jid,
+          text,
+        });
+      }
+
+      return {
+        ...this.defaultReply,
+        name: 'Agenda',
+        response: buildCpfChannelMessage(),
+      };
+    }
+
     if (current?.status === 'awaiting_urgent_phone') {
       return this.createUrgentPhoneReply({ contactName, current, jid, text });
     }
@@ -2305,24 +2437,11 @@ export class WhatsAppClient extends EventEmitter {
       }
 
       if (isCpfDocumentTypeText(text)) {
-        const data = mergeScheduleData(current.data, {
-          analysisAccepted: true,
-          documentType: 'cpf',
-          leadConfidence: 1,
-          leadType: 'low_ticket',
-          notes: 'Cliente voltou para CPF durante seleção de segmento.',
-          paymentAmount: 150,
-          segment: 'person',
-        });
-
-        return this.createPaymentAcceptedReply({
+        return this.createCpfProceedReply({
           contactName,
-          current: {
-            ...current,
-            data,
-          },
+          current,
           jid,
-          text,
+          notes: 'Cliente voltou para CPF durante seleção de segmento.',
         });
       }
 
