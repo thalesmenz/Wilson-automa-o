@@ -50,8 +50,11 @@ export class DatabaseService {
 
   async close() {
     if (this.pool) {
-      await this.pool.end();
+      // Solta a referencia antes de encerrar: chamadas que chegarem durante o desligamento abrem um pool novo
+      // em vez de falhar com "Cannot use a pool after calling end on the pool".
+      const pool = this.pool;
       this.pool = null;
+      await pool.end();
     }
   }
 }

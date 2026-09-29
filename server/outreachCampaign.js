@@ -114,20 +114,35 @@ export class OutreachCampaign {
       throw new Error('Esse telefone já está na lista.');
     }
 
-    this.state.contacts.push(contact);
-    await this.save();
+    const previousContacts = this.state.contacts;
+    this.state.contacts = [...previousContacts, contact];
+
+    try {
+      await this.save();
+    } catch (error) {
+      // Sem isso o contato fica so na memoria e a proxima tentativa cai em "ja esta na lista".
+      this.state.contacts = previousContacts;
+      throw error;
+    }
+
     return this.getState();
   }
 
   async removeContact(id) {
-    const currentLength = this.state.contacts.length;
-    this.state.contacts = this.state.contacts.filter((contact) => contact.id !== id);
+    const previousContacts = this.state.contacts;
+    this.state.contacts = previousContacts.filter((contact) => contact.id !== id);
 
-    if (this.state.contacts.length === currentLength) {
+    if (this.state.contacts.length === previousContacts.length) {
       throw new Error('Contato não encontrado na lista.');
     }
 
-    await this.save();
+    try {
+      await this.save();
+    } catch (error) {
+      this.state.contacts = previousContacts;
+      throw error;
+    }
+
     return this.getState();
   }
 

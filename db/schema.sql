@@ -55,3 +55,11 @@ create index if not exists whatsapp_events_created_idx
 create index if not exists whatsapp_events_type_created_idx
   on public.whatsapp_events (type, created_at desc);
 
+
+-- Estado que antes ia para disco: settings do dashboard, tokens OAuth do Google e sessao do WhatsApp (Baileys).
+-- As chaves sao prefixadas pelo ambiente (ex.: "prod:", "dev:"). O servidor tambem cria a tabela se faltar.
+create table if not exists public.app_kv (
+  key text primary key,
+  value jsonb not null,
+  updated_at timestamptz not null default now()
+);

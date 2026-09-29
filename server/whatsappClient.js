@@ -10,6 +10,7 @@ import makeWASocket, {
 } from '@whiskeysockets/baileys';
 import P from 'pino';
 import QRCode from 'qrcode';
+import { usePostgresAuthState } from './baileysAuthState.js';
 
 const logger = P({ level: process.env.LOG_LEVEL || 'silent' });
 const RESPOND_TO_GROUPS = process.env.WHATSAPP_RESPOND_TO_GROUPS === 'true';
@@ -150,6 +151,9 @@ function getTypingDelay(text) {
 function pruneWindow(timestamps, cutoff) {
   return timestamps.filter((timestamp) => timestamp > cutoff);
 }
+
+const SESSION_KEY_PREFIX = 'baileys/';
+const SESSION_BACKUP_KEY_PREFIX = 'baileys-backups/';
 
 function getSessionBackupName(reason) {
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -1073,10 +1077,11 @@ function buildCalendarDescription({ contactName, data = {}, jid, leadType, notes
 }
 
 export class WhatsAppClient extends EventEmitter {
-  constructor({ appointmentStore, authDir, calendar, gemini, store }) {
+  constructor({ appointmentStore, authDir, calendar, gemini, sessionStore, store }) {
     super();
     this.appointmentStore = appointmentStore;
     this.authDir = authDir;
+    this.sessionStore = sessionStore;
     this.sessionBackupDir = process.env.WHATSAPP_SESSION_BACKUP_DIR
       ? path.resolve(process.env.WHATSAPP_SESSION_BACKUP_DIR)
       : path.join(path.dirname(authDir), 'baileys-backups');
@@ -1123,7 +1128,53 @@ export class WhatsAppClient extends EventEmitter {
     };
   }
 
+  get usesDatabaseSession() {
+    return Boolean(this.sessionStore?.isReady);
+  }
+
+  async getDatabaseSessionDiagnostics() {
+    const result = {
+      authDir: `${this.sessionStore.table}:${this.sessionStore.key(SESSION_KEY_PREFIX)}`,
+      exists: false,
+      fileCount: 0,
+      hasCreds: false,
+      creds: null,
+      backupDir: `${this.sessionStore.table}:${this.sessionStore.key(SESSION_BACKUP_KEY_PREFIX)}`,
+      backupCount: 0,
+      latestBackup: null,
+      storage: 'database',
+    };
+
+    result.fileCount = await this.sessionStore.countPrefix(SESSION_KEY_PREFIX);
+    result.exists = result.fileCount > 0;
+
+    const creds = await this.sessionStore.get(`${SESSION_KEY_PREFIX}creds`);
+    if (creds) {
+      const idDigits = String(creds.me?.id || '').replace(/\D/g, '');
+      const lidDigits = String(creds.me?.lid || '').replace(/\D/g, '');
+      result.hasCreds = true;
+      result.creds = {
+        idEnding: idDigits ? idDigits.slice(-4) : null,
+        lidEnding: lidDigits ? lidDigits.slice(-4) : null,
+        modifiedAt: null,
+        name: creds.me?.name || null,
+        platform: creds.platform || null,
+        registered: Boolean(creds.registered),
+      };
+    }
+
+    const backups = await this.sessionStore.listPrefixes(SESSION_BACKUP_KEY_PREFIX);
+    result.backupCount = backups.length;
+    result.latestBackup = backups.at(-1) || null;
+
+    return result;
+  }
+
   async getSessionDiagnostics() {
+    if (this.usesDatabaseSession) {
+      return this.getDatabaseSessionDiagnostics();
+    }
+
     const result = {
       authDir: this.authDir,
       exists: false,
@@ -1183,6 +1234,17 @@ export class WhatsAppClient extends EventEmitter {
     }
 
     const backupName = getSessionBackupName(reason);
+
+    if (this.usesDatabaseSession) {
+      const backupPrefix = `${SESSION_BACKUP_KEY_PREFIX}${backupName}/`;
+      await this.sessionStore.copyPrefix(SESSION_KEY_PREFIX, backupPrefix);
+      return {
+        backupDir: `${this.sessionStore.table}:${this.sessionStore.key(backupPrefix)}`,
+        fileCount: diagnostics.fileCount,
+        hasCreds: diagnostics.hasCreds,
+      };
+    }
+
     const backupDir = path.join(this.sessionBackupDir, backupName);
     await fs.mkdir(this.sessionBackupDir, { recursive: true });
     await fs.cp(this.authDir, backupDir, { recursive: true, errorOnExist: true, force: false });
@@ -1400,7 +1462,9 @@ export class WhatsAppClient extends EventEmitter {
     this.emitActivity('connection', 'Conectando ao WhatsApp.');
 
     try {
-      const { state, saveCreds } = await useMultiFileAuthState(this.authDir);
+      const { state, saveCreds } = this.usesDatabaseSession
+        ? await usePostgresAuthState(this.sessionStore, SESSION_KEY_PREFIX.slice(0, -1))
+        : await useMultiFileAuthState(this.authDir);
       const { version } = await fetchLatestBaileysVersion().catch(() => ({ version: undefined }));
       const sock = makeWASocket({
         auth: state,
@@ -3463,7 +3527,11 @@ export class WhatsAppClient extends EventEmitter {
     this.startedAt = null;
 
     if (clearSession) {
-      await fs.rm(this.authDir, { recursive: true, force: true });
+      if (this.usesDatabaseSession) {
+        await this.sessionStore.deletePrefix(SESSION_KEY_PREFIX);
+      } else {
+        await fs.rm(this.authDir, { recursive: true, force: true });
+      }
       this.emitActivity('connection', 'Sessao local removida.', {
         backupDir: sessionBackup?.backupDir || null,
       });

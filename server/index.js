@@ -10,6 +10,7 @@ import { AppointmentStore } from './appointmentStore.js';
 import { AgentConfig } from './agentConfig.js';
 import { AutomationStore } from './storage.js';
 import { DatabaseService } from './database.js';
+import { KeyValueStore } from './kvStore.js';
 import { GeminiClient } from './geminiClient.js';
 import { GoogleCalendarClient } from './googleCalendarClient.js';
 import { ReminderWorker } from './reminderWorker.js';
@@ -55,7 +56,7 @@ function requireDiagnosticsAccess(req, res, next) {
   next();
 }
 
-async function readSettings() {
+async function readSettingsFile() {
   try {
     return JSON.parse(await fsPromises.readFile(settingsPath, 'utf8'));
   } catch (error) {
@@ -67,7 +68,37 @@ async function readSettings() {
   }
 }
 
+async function readSettings() {
+  if (!kv.isReady) {
+    return readSettingsFile();
+  }
+
+  let stored;
+  try {
+    stored = await kv.get('settings');
+  } catch (error) {
+    console.warn(`Nao foi possivel ler as configuracoes do banco. Usando arquivo: ${error.message}`);
+    return readSettingsFile();
+  }
+
+  if (stored) {
+    return stored;
+  }
+
+  // Primeira execucao com banco: importa o settings.json existente, se houver.
+  const fromFile = await readSettingsFile().catch(() => ({}));
+  if (Object.keys(fromFile).length) {
+    await kv.set('settings', fromFile);
+  }
+  return fromFile;
+}
+
 async function writeSettings(settings) {
+  if (kv.isReady) {
+    await kv.set('settings', settings);
+    return settings;
+  }
+
   await fsPromises.mkdir(path.dirname(settingsPath), { recursive: true });
   await fsPromises.writeFile(settingsPath, JSON.stringify(settings, null, 2));
   return settings;
@@ -83,6 +114,7 @@ const io = new Server(server, {
 });
 
 const database = new DatabaseService();
+const kv = new KeyValueStore({ database });
 const store = new AutomationStore({ dataDir: path.join(__dirname, 'data'), database });
 await store.ready;
 const settings = await readSettings();
@@ -91,7 +123,10 @@ const appointmentStore = new AppointmentStore({
   database,
   enabled: settings.followupsEnabled ?? process.env.FOLLOWUP_ENABLED !== 'false',
 });
-const calendar = new GoogleCalendarClient();
+const calendar = new GoogleCalendarClient({ tokenStore: kv });
+await calendar.loadSavedTokens().catch((error) => {
+  console.warn(`Nao foi possivel carregar tokens do Google do banco: ${error.message}`);
+});
 const gemini = new GeminiClient({ agentConfig: settings.agent });
 const agent = new AgentConfig({
   initialState: settings.agent,
@@ -109,6 +144,7 @@ const baileysWhatsapp = new WhatsAppClient({
   authDir: whatsappSessionDir,
   calendar,
   gemini,
+  sessionStore: kv,
   store,
 });
 const metaWhatsapp = new MetaWhatsAppClient({

@@ -195,6 +195,7 @@ export class GoogleCalendarClient {
     privateKey = process.env.GOOGLE_PRIVATE_KEY,
     serviceAccountJsonPath = process.env.GOOGLE_SERVICE_ACCOUNT_JSON_PATH,
     timeZone = process.env.GOOGLE_CALENDAR_TIME_ZONE || 'America/Sao_Paulo',
+    tokenStore,
   } = {}) {
     const serviceAccount = loadServiceAccount(serviceAccountJsonPath);
     const hasOAuthConfig = Boolean(oauthClientId && oauthClientSecret);
@@ -208,6 +209,8 @@ export class GoogleCalendarClient {
     this.oauthClientSecret = oauthClientSecret;
     this.oauthRedirectUri = oauthRedirectUri;
     this.oauthTokenDir = oauthTokenDir;
+    this.tokenStore = tokenStore;
+    this.storedTokens = {};
     this.oauthTokens = {
       default: oauthRefreshToken,
       high_ticket: oauthHighTicketRefreshToken,
@@ -225,6 +228,40 @@ export class GoogleCalendarClient {
       workdays: parseWorkdays(DEFAULT_AVAILABILITY_WORKDAYS),
     };
     this.calendar = new Map();
+  }
+
+  get usesTokenStore() {
+    return Boolean(this.tokenStore?.isReady);
+  }
+
+  // Tokens salvos pelo fluxo OAuth: no banco quando ha DATABASE_URL, senao em arquivo.
+  async loadSavedTokens() {
+    if (!this.usesTokenStore) {
+      return;
+    }
+
+    const leadTypes = ['default', 'low_ticket', 'high_ticket'];
+    const stored = await this.tokenStore.getMany(leadTypes.map((leadType) => `google-oauth/${leadType}`));
+    for (const leadType of leadTypes) {
+      let token = stored.get(`google-oauth/${leadType}`) || null;
+
+      // Importa uma vez tokens que ficaram em arquivo antes do banco.
+      const fileToken = token ? null : readOAuthToken(this.oauthTokenDir, leadType);
+      if (fileToken?.refresh_token) {
+        await this.tokenStore.set(`google-oauth/${leadType}`, fileToken);
+        token = fileToken;
+      }
+
+      this.storedTokens[leadType] = token?.refresh_token || null;
+    }
+  }
+
+  readSavedToken(leadType) {
+    if (this.usesTokenStore) {
+      return this.storedTokens[leadType] || null;
+    }
+
+    return readOAuthToken(this.oauthTokenDir, leadType)?.refresh_token || null;
   }
 
   get isReady() {
@@ -245,7 +282,7 @@ export class GoogleCalendarClient {
 
   getDirectOAuthRefreshToken(leadType) {
     const normalizedLeadType = normalizeLeadType(leadType);
-    return this.oauthTokens[normalizedLeadType] || readOAuthToken(this.oauthTokenDir, normalizedLeadType)?.refresh_token || null;
+    return this.oauthTokens[normalizedLeadType] || this.readSavedToken(normalizedLeadType) || null;
   }
 
   getStatus() {
@@ -311,23 +348,24 @@ export class GoogleCalendarClient {
     this.oauthTokens[normalizedLeadType] = tokens.refresh_token;
     this.calendar.delete(normalizedLeadType);
 
+    const savedToken = {
+      created_at: new Date().toISOString(),
+      lead_type: normalizedLeadType,
+      refresh_token: tokens.refresh_token,
+      scope: tokens.scope,
+      token_type: tokens.token_type,
+    };
+
+    if (this.usesTokenStore) {
+      await this.tokenStore.set(`google-oauth/${normalizedLeadType}`, savedToken);
+      this.storedTokens[normalizedLeadType] = tokens.refresh_token;
+      return { leadType: normalizedLeadType, savedLocally: true, tokenPath: null };
+    }
+
     const tokenPath = getTokenPath(this.oauthTokenDir, normalizedLeadType);
     if (tokenPath) {
       await fsPromises.mkdir(path.dirname(tokenPath), { recursive: true });
-      await fsPromises.writeFile(
-        tokenPath,
-        JSON.stringify(
-          {
-            created_at: new Date().toISOString(),
-            lead_type: normalizedLeadType,
-            refresh_token: tokens.refresh_token,
-            scope: tokens.scope,
-            token_type: tokens.token_type,
-          },
-          null,
-          2,
-        ),
-      );
+      await fsPromises.writeFile(tokenPath, JSON.stringify(savedToken, null, 2));
     }
 
     return {
@@ -343,9 +381,11 @@ export class GoogleCalendarClient {
     }
 
     const normalizedLeadType = normalizeLeadType(leadType);
-    const tokenPath = getTokenPath(this.oauthTokenDir, normalizedLeadType);
+    const tokenPath = this.usesTokenStore ? null : getTokenPath(this.oauthTokenDir, normalizedLeadType);
     const hadMemoryToken = Boolean(this.oauthTokens[normalizedLeadType]);
-    const hadFileToken = Boolean(tokenPath && fs.existsSync(tokenPath));
+    const hadFileToken = this.usesTokenStore
+      ? Boolean(this.storedTokens[normalizedLeadType])
+      : Boolean(tokenPath && fs.existsSync(tokenPath));
 
     this.oauthTokens[normalizedLeadType] = null;
 
@@ -355,7 +395,10 @@ export class GoogleCalendarClient {
       this.calendar.delete(normalizedLeadType);
     }
 
-    if (hadFileToken) {
+    if (hadFileToken && this.usesTokenStore) {
+      await this.tokenStore.delete(`google-oauth/${normalizedLeadType}`);
+      this.storedTokens[normalizedLeadType] = null;
+    } else if (hadFileToken) {
       await fsPromises.rm(tokenPath, { force: true });
     }
 
@@ -374,13 +417,13 @@ export class GoogleCalendarClient {
       return directToken;
     }
 
-    const fileToken = readOAuthToken(this.oauthTokenDir, normalizedLeadType)?.refresh_token;
+    const fileToken = this.readSavedToken(normalizedLeadType);
     if (fileToken) {
       return fileToken;
     }
 
     if (normalizedLeadType !== 'default') {
-      return this.oauthTokens.default || readOAuthToken(this.oauthTokenDir, 'default')?.refresh_token || null;
+      return this.oauthTokens.default || this.readSavedToken('default') || null;
     }
 
     return null;

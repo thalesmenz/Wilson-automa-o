@@ -220,6 +220,10 @@ O Gemini classifica `negativado/restrito` como `low_ticket`, `rating bancario ba
 
 Para os lembretes e o dashboard nao dependerem do filesystem do Render, agendamentos, conversas e eventos sao salvos num Postgres no Neon.
 
+Com `DATABASE_URL` configurada, o que antes ia para disco tambem fica no banco (tabela `app_kv`): configuracoes do dashboard (agente, fluxos, prospeccao), tokens OAuth do Google Agenda e a sessao do WhatsApp (Baileys). Assim o Render nao precisa de disco persistente e nada se perde em deploy/restart. Sem `DATABASE_URL`, tudo continua em arquivo como antes.
+
+As chaves sao separadas por ambiente (`prod:` em producao, `dev:` localmente) para o servidor local nao disputar a sessao do WhatsApp com o de producao. Para mudar, use `KV_NAMESPACE`. Na primeira execucao com banco, o `settings.json` e os tokens do Google em arquivo sao importados automaticamente; a sessao do WhatsApp precisa de um novo QR Code.
+
 1. Crie um projeto no Neon e copie a connection string (pooled).
 2. Crie as tabelas:
 
