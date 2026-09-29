@@ -75,30 +75,8 @@ const AUDIO_TRANSCRIPTION_MAX_CHARS = Number.isFinite(configuredAudioTranscriptM
 const AUDIO_TRANSCRIPTION_FAILURE_REPLY =
   process.env.AUDIO_TRANSCRIPTION_FAILURE_REPLY ||
   'Não consegui ouvir esse áudio com segurança. Pode mandar em texto para eu continuar o atendimento?';
-const LEGACY_INITIAL_APPROACH_MESSAGE =
-  'Olá, sou assistente do Wilson Sanches da Cresce Mais. Para te direcionar melhor, esse atendimento é para CPF ou CNPJ?\n\n1. CPF\n2. CNPJ';
-const INITIAL_APPROACH_MESSAGE =
-  'Cresce Mais, Consultoria Financeira!\n' +
-  'Somos especializados em reintegração de crédito para destravar o seu financiamento.\n' +
-  'Atuamos com:\n' +
-  '✅ Limpa nome / renegociação de dívidas\n' +
-  '✅ Rating bancário\n' +
-  '✅ Consulta Bacen\n' +
-  '✅ Devolutiva de cheque\n' +
-  '✅ Cadin\n' +
-  '✅ CPF e CNPJ\n' +
-  'Me conta: seu atendimento é para qual caso?\n' +
-  'Responda com o número:\n' +
-  '1. CPF\n' +
-  '2. CNPJ\n' +
-  '3. Como funciona?';
 const configuredAutoReplyText = process.env.AUTO_REPLY_TEXT;
-const AUTO_REPLY_TEXT =
-  configuredAutoReplyText &&
-  configuredAutoReplyText !== LEGACY_INITIAL_APPROACH_MESSAGE &&
-  !configuredAutoReplyText.includes('Me conta: o que você precisa resolver hoje?')
-    ? configuredAutoReplyText
-    : INITIAL_APPROACH_MESSAGE;
+const AUTO_REPLY_TEXT = configuredAutoReplyText || '';
 
 const DEFAULT_AUTO_REPLY = {
   id: 'default-auto-reply',
@@ -1819,34 +1797,25 @@ export class WhatsAppClient extends EventEmitter {
   }
 
   async createReply(text, isGroup, jid, contactName) {
-    if (!this.defaultReply.active || (isGroup && !this.defaultReply.includeGroups)) {
+    if (isGroup && !this.defaultReply.includeGroups) {
       return null;
     }
 
     const history = buildConversationHistory(this.store?.getConversation?.(jid));
-    const schedulingReply = await this.createSchedulingReply({ contactName, history, isGroup, jid, text });
-    if (schedulingReply) {
-      return schedulingReply;
-    }
-
     const fallbackReply = this.findDefaultReply(isGroup, jid);
-    if (!fallbackReply) {
+    if (!this.gemini?.isReady || !this.gemini.hasActiveFlow?.('inbound')) {
       return null;
     }
 
-    if (!this.gemini?.isReady) {
-      return fallbackReply;
-    }
-
     try {
-      const response = await this.gemini.generateReply({ text, contactName, history });
+      const response = await this.gemini.generateReply({ text, contactName, history, trigger: 'inbound' });
       return {
-        ...fallbackReply,
+        ...(fallbackReply || this.defaultReply),
         name: 'IA',
         response,
       };
     } catch (error) {
-      this.emitActivity('error', 'IA falhou. Usando resposta padrao.', { error: error.message });
+      this.emitActivity('error', 'IA falhou ao executar o fluxo de entrada.', { error: error.message });
       return fallbackReply;
     }
   }

@@ -351,6 +351,359 @@ button:disabled {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.outreach-page {
+  display: grid;
+  gap: 18px;
+}
+
+.agent-page {
+  display: grid;
+  gap: 18px;
+}
+
+.agent-intro {
+  align-items: center;
+  display: flex;
+  gap: 24px;
+  justify-content: space-between;
+}
+
+.agent-intro h2 {
+  font-size: 23px;
+  line-height: 1.15;
+  margin: 4px 0 8px;
+}
+
+.agent-intro p {
+  color: #62737d;
+  margin: 0;
+  max-width: 700px;
+}
+
+.agent-intro-tags {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  gap: 9px;
+  justify-content: flex-end;
+}
+
+.agent-intro-tags span {
+  background: #edf4ff;
+  border: 1px solid #d4e2fa;
+  border-radius: 8px;
+  color: #4c627a;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 8px 10px;
+}
+
+.agent-intro-tags strong {
+  color: #2b62ac;
+  font-size: 16px;
+  margin-right: 4px;
+}
+
+.agent-grid {
+  display: grid;
+  gap: 18px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.agent-form,
+.agent-flow-card {
+  display: grid;
+  gap: 12px;
+}
+
+.agent-form label,
+.agent-flow-card label {
+  color: #40525b;
+  display: grid;
+  font-size: 13px;
+  font-weight: 850;
+  gap: 6px;
+}
+
+.agent-form input,
+.agent-form textarea,
+.agent-form select,
+.agent-flow-card input,
+.agent-flow-card textarea,
+.agent-flow-card select {
+  background: #fff;
+  border: 1px solid #d5dee3;
+  border-radius: 8px;
+  color: #17211d;
+  font: inherit;
+  font-weight: 600;
+  outline: none;
+  padding: 10px 12px;
+  resize: vertical;
+  width: 100%;
+}
+
+.agent-form input:focus,
+.agent-form textarea:focus,
+.agent-form select:focus,
+.agent-flow-card input:focus,
+.agent-flow-card textarea:focus,
+.agent-flow-card select:focus {
+  border-color: #14856c;
+  box-shadow: 0 0 0 3px rgba(20, 133, 108, 0.12);
+}
+
+.agent-form button {
+  justify-self: start;
+}
+
+.checkbox-field {
+  align-items: center;
+  display: flex !important;
+  gap: 8px !important;
+}
+
+.checkbox-field input {
+  accent-color: #126e5c;
+  height: 17px;
+  margin: 0;
+  padding: 0;
+  width: 17px;
+}
+
+.agent-flow-list {
+  display: grid;
+  gap: 14px;
+}
+
+.agent-flow-card {
+  background: #f9fbfb;
+  border: 1px solid #dfe7eb;
+  border-radius: 8px;
+  padding: 14px;
+}
+
+.agent-flow-heading {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 0.45fr);
+}
+
+.agent-flow-actions {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.agent-flow-actions > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.outreach-intro {
+  align-items: center;
+  display: flex;
+  gap: 24px;
+  justify-content: space-between;
+}
+
+.outreach-intro h2 {
+  font-size: 23px;
+  line-height: 1.15;
+  margin: 4px 0 8px;
+}
+
+.outreach-intro p {
+  color: #62737d;
+  margin: 0;
+  max-width: 720px;
+}
+
+.outreach-timing {
+  align-items: center;
+  display: flex;
+  gap: 22px;
+  justify-content: space-between;
+}
+
+.outreach-timing h2 {
+  font-size: 18px;
+  margin: 3px 0 5px;
+}
+
+.outreach-timing p {
+  color: #62737d;
+  font-size: 13px;
+  margin: 0;
+}
+
+.outreach-interval-form {
+  align-items: center;
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.outreach-interval-form label,
+.outreach-interval-form span {
+  color: #52636d;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.outreach-interval-form input {
+  border: 1px solid #d5dee3;
+  border-radius: 8px;
+  font: inherit;
+  font-weight: 800;
+  min-height: 40px;
+  padding: 0 10px;
+  text-align: center;
+  width: 74px;
+}
+
+.outreach-progress {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  gap: 9px;
+  justify-content: flex-end;
+}
+
+.outreach-progress span {
+  background: #f3f7f6;
+  border: 1px solid #dfe9e6;
+  border-radius: 8px;
+  color: #60716f;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 8px 10px;
+}
+
+.outreach-progress strong {
+  color: #126e5c;
+  font-size: 16px;
+  margin-right: 4px;
+}
+
+.outreach-grid {
+  display: grid;
+  gap: 18px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.outreach-form {
+  display: grid;
+  gap: 12px;
+}
+
+.outreach-form label {
+  color: #40525b;
+  display: grid;
+  font-size: 13px;
+  font-weight: 850;
+  gap: 6px;
+}
+
+.outreach-form label small {
+  color: #8a6262;
+  font-weight: 750;
+}
+
+.outreach-form input,
+.outreach-form textarea {
+  background: #fff;
+  border: 1px solid #d5dee3;
+  border-radius: 8px;
+  color: #17211d;
+  font: inherit;
+  font-weight: 600;
+  outline: none;
+  padding: 10px 12px;
+  resize: vertical;
+  width: 100%;
+}
+
+.outreach-form input:focus,
+.outreach-form textarea:focus {
+  border-color: #14856c;
+  box-shadow: 0 0 0 3px rgba(20, 133, 108, 0.12);
+}
+
+.outreach-form button {
+  justify-self: start;
+}
+
+.form-hint,
+.outreach-status,
+.outreach-warning {
+  color: #64747d;
+  font-size: 13px;
+  margin: 0;
+}
+
+.form-hint code {
+  background: #eff4f4;
+  border-radius: 4px;
+  color: #126e5c;
+  padding: 1px 4px;
+}
+
+.outreach-list-header {
+  align-items: start;
+}
+
+.outreach-warning {
+  background: #fff7dd;
+  border: 1px solid #edd996;
+  border-radius: 8px;
+  color: #735a09;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+}
+
+.outreach-contacts {
+  border-top: 1px solid #e8edef;
+}
+
+.outreach-contact {
+  align-items: center;
+  border-bottom: 1px solid #e8edef;
+  display: flex;
+  gap: 14px;
+  justify-content: space-between;
+  padding: 13px 0;
+}
+
+.outreach-contact > div:first-child {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.outreach-contact strong {
+  font-size: 14px;
+}
+
+.outreach-contact span {
+  color: #6b7a83;
+  font-size: 13px;
+}
+
+.outreach-contact .error-text {
+  font-size: 12px;
+}
+
+.outreach-contact-actions {
+  align-items: center;
+  display: flex;
+  flex: 0 0 auto;
+  gap: 9px;
+}
+
 .connection-grid .panel:first-child,
 .follow-page .panel:first-child {
   grid-column: 1 / -1;
@@ -1413,8 +1766,33 @@ button:disabled {
   .dashboard-grid,
   .overview-grid,
   .connection-grid,
-  .follow-page {
+  .follow-page,
+  .outreach-grid,
+  .agent-grid {
     grid-template-columns: 1fr;
+  }
+
+  .outreach-intro {
+    align-items: start;
+    flex-direction: column;
+  }
+
+  .agent-intro {
+    align-items: start;
+    flex-direction: column;
+  }
+
+  .agent-intro-tags {
+    justify-content: flex-start;
+  }
+
+  .outreach-timing {
+    align-items: start;
+    flex-direction: column;
+  }
+
+  .outreach-progress {
+    justify-content: flex-start;
   }
 
   .connection-grid .panel:first-child,
@@ -1561,6 +1939,30 @@ button:disabled {
     align-items: start;
     grid-template-columns: 1fr;
     padding: 10px 0;
+  }
+
+  .outreach-list-header,
+  .outreach-contact {
+    align-items: start;
+    flex-direction: column;
+  }
+
+  .outreach-list-header > button {
+    width: 100%;
+  }
+
+  .outreach-contact-actions {
+    justify-content: space-between;
+    width: 100%;
+  }
+
+  .agent-flow-heading {
+    grid-template-columns: 1fr;
+  }
+
+  .agent-flow-actions {
+    align-items: start;
+    flex-direction: column;
   }
 
   .calendar-toolbar {

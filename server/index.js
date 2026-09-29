@@ -7,12 +7,14 @@ import express from 'express';
 import cors from 'cors';
 import { Server } from 'socket.io';
 import { AppointmentStore } from './appointmentStore.js';
+import { AgentConfig } from './agentConfig.js';
 import { AutomationStore } from './storage.js';
 import { DatabaseService } from './database.js';
 import { GeminiClient } from './geminiClient.js';
 import { GoogleCalendarClient } from './googleCalendarClient.js';
 import { ReminderWorker } from './reminderWorker.js';
 import { MetaWhatsAppClient } from './metaWhatsAppClient.js';
+import { OutreachCampaign } from './outreachCampaign.js';
 import { WhatsAppClient } from './whatsappClient.js';
 import { normalizeWhatsappProvider, WhatsAppProviderManager } from './whatsappProviderManager.js';
 
@@ -90,7 +92,18 @@ const appointmentStore = new AppointmentStore({
   enabled: settings.followupsEnabled ?? process.env.FOLLOWUP_ENABLED !== 'false',
 });
 const calendar = new GoogleCalendarClient();
-const gemini = new GeminiClient();
+const gemini = new GeminiClient({ agentConfig: settings.agent });
+const agent = new AgentConfig({
+  initialState: settings.agent,
+  persist: async (state) => {
+    settings.agent = state;
+    await writeSettings(settings);
+  },
+  onChange: (state) => {
+    gemini.setAgentConfig(state);
+    io.emit('agent', state);
+  },
+});
 const baileysWhatsapp = new WhatsAppClient({
   appointmentStore,
   authDir: whatsappSessionDir,
@@ -110,6 +123,44 @@ const whatsapp = new WhatsAppProviderManager({
   clients: {
     baileys: baileysWhatsapp,
     meta: metaWhatsapp,
+  },
+});
+const outreach = new OutreachCampaign({
+  initialState: settings.outreach,
+  persist: async (state) => {
+    settings.outreach = state;
+    await writeSettings(settings);
+  },
+  sendText: (phone, text) => whatsapp.sendText(phone, text),
+  canBuildMessage: () => Boolean(gemini.isReady && gemini.hasActiveFlow('prospecting')),
+  buildMessage: async ({ contact, fallback }) => {
+    try {
+      return await gemini.generateProspectingMessage({
+        company: contact.company,
+        contactName: contact.name,
+        fallback,
+      });
+    } catch (error) {
+      addActivity({
+        id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        type: 'error',
+        message: 'A IA não conseguiu criar a mensagem de prospecção. Usando o modelo salvo.',
+        meta: { error: error.message },
+        createdAt: new Date().toISOString(),
+      });
+      return null;
+    }
+  },
+  getConnectionState: () => whatsapp.getState(),
+  onChange: (state) => io.emit('outreach', state),
+  onActivity: (message, meta = {}, type = 'outreach') => {
+    addActivity({
+      id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      type,
+      message,
+      meta,
+      createdAt: new Date().toISOString(),
+    });
   },
 });
 const reminderWorker = new ReminderWorker({ appointmentStore, whatsapp });
@@ -502,6 +553,94 @@ app.post('/api/messages/send', async (req, res) => {
   }
 });
 
+app.get('/api/outreach', (_req, res) => {
+  res.json(outreach.getState());
+});
+
+app.get('/api/agent', (_req, res) => {
+  res.json(agent.getState());
+});
+
+app.put('/api/agent/prompt', async (req, res) => {
+  try {
+    res.json(await agent.setPrompt(req.body?.prompt));
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.post('/api/agent/flows', async (req, res) => {
+  try {
+    res.status(201).json(await agent.createFlow(req.body || {}));
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.put('/api/agent/flows/:id', async (req, res) => {
+  try {
+    res.json(await agent.updateFlow(req.params.id, req.body || {}));
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.delete('/api/agent/flows/:id', async (req, res) => {
+  try {
+    res.json(await agent.deleteFlow(req.params.id));
+  } catch (error) {
+    res.status(404).json({ error: error.message });
+  }
+});
+
+app.put('/api/outreach/message', async (req, res) => {
+  try {
+    res.json(await outreach.setMessage(req.body?.message));
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.put('/api/outreach/interval', async (req, res) => {
+  try {
+    res.json(await outreach.setIntervalMinutes(req.body?.intervalMinutes));
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.post('/api/outreach/contacts', async (req, res) => {
+  try {
+    res.status(201).json(await outreach.addContact(req.body || {}));
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.delete('/api/outreach/contacts/:id', async (req, res) => {
+  try {
+    res.json(await outreach.removeContact(req.params.id));
+  } catch (error) {
+    res.status(404).json({ error: error.message });
+  }
+});
+
+app.post('/api/outreach/start', async (req, res) => {
+  try {
+    res.json(await outreach.start({ retryFailed: Boolean(req.body?.retryFailed) }));
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.post('/api/outreach/pause', async (_req, res) => {
+  try {
+    res.json(await outreach.pause());
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
 app.post('/api/meta/templates/send', async (req, res) => {
   try {
     const result = await metaWhatsapp.sendTemplate(req.body?.phone, {
@@ -724,6 +863,8 @@ io.on('connection', (socket) => {
   socket.emit('automations', store.getAutomations());
   socket.emit('conversations', store.getConversations());
   socket.emit('activity:init', activity);
+  socket.emit('outreach', outreach.getState());
+  socket.emit('agent', agent.getState());
 
   store.syncRemoteDashboardData?.()
     .then(() => {
@@ -751,6 +892,7 @@ server.on('error', (error) => {
 
 async function shutdown() {
   reminderWorker.stop();
+  outreach.stop();
   await whatsapp.disconnectAll({ clearSession: false }).catch(() => null);
   await database.close().catch(() => null);
 

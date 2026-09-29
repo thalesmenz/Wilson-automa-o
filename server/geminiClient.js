@@ -1,18 +1,10 @@
 const GEMINI_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta';
 
 const DEFAULT_SYSTEM_PROMPT = `
-Você é um assistente de atendimento do Wilson Sanches no WhatsApp.
-Atue de forma formal, direta e profissional, sempre em português do Brasil.
-Você se apresenta como Cresce Mais, Consultoria Financeira.
-O atendimento Wilson Sanches trabalha com reintegração de crédito para destravar financiamento, incluindo limpa nome/renegociação de dívidas, rating bancário, Consulta Bacen, devolutiva de cheque, Cadin, CPF e CNPJ.
-No primeiro contato, use a abordagem inicial do funil: pergunte se o atendimento é para CPF ou CNPJ e ofereça as opções 1 CPF, 2 CNPJ, 3 entender como funciona.
-Se a pessoa informar CNPJ espontaneamente, pergunte a área de atuação; se for agro, direcione para atendimento preferencial por ligação com horário marcado.
-Explique que a primeira etapa obrigatória é uma consulta para identificar exatamente qual problema está impedindo o crédito.
-Não prometa garantia absoluta, prazo fechado, aprovação de crédito, financiamento ou limpeza total antes da consulta.
-Não invente documentos, políticas ou etapas. Se faltar informação, pergunte se o caso é negativação ou rating bancário baixo e confirme se a pessoa deseja seguir com a consulta.
-Se a pessoa não aceitar pagar pela consulta, encerre de forma educada e não tente agendar.
-A IA deve seguir o fluxo pré-estabelecido do atendimento. Use inteligência para entender variações de linguagem, referências ao histórico e respostas incompletas, mas não crie etapas novas, não mude valores, não pule confirmação e não ofereça caminhos fora do funil.
-Use mensagens curtas, sem markdown pesado e sem listas longas.
+Você é um agente de atendimento no WhatsApp.
+Siga apenas o prompt principal e o fluxo ativo configurados pelo administrador.
+Não invente regras, preços, promessas ou etapas que não estejam nessas instruções.
+Responda em português do Brasil de forma clara e objetiva.
 `.trim();
 
 function cleanText(value) {
@@ -79,12 +71,41 @@ export class GeminiClient {
     model = process.env.GEMINI_MODEL || 'gemini-2.5-flash',
     enabled = process.env.GEMINI_ENABLED !== 'false',
     systemPrompt = DEFAULT_SYSTEM_PROMPT,
+    agentConfig = {},
   } = {}) {
     this.apiKey = apiKey;
     this.model = String(model || 'gemini-2.5-flash').replace(/^models\//, '');
     this.audioModel = String(audioModel || this.model).replace(/^models\//, '');
     this.enabled = enabled;
     this.systemPrompt = systemPrompt;
+    this.setAgentConfig(agentConfig);
+  }
+
+  setAgentConfig(config = {}) {
+    this.agentPrompt = cleanText(config.prompt);
+    this.flows = Array.isArray(config.flows) ? config.flows : [];
+  }
+
+  getActiveFlow(trigger) {
+    const activeFlows = this.flows.filter((flow) => flow.active && flow.trigger === trigger && cleanText(flow.instructions));
+    if (!activeFlows.length) {
+      return null;
+    }
+
+    return {
+      name: activeFlows.map((flow) => flow.name).join(' + '),
+      instructions: activeFlows.map((flow) => `Fluxo: ${flow.name}\n${cleanText(flow.instructions)}`).join('\n\n'),
+    };
+  }
+
+  hasActiveFlow(trigger) {
+    return Boolean(this.getActiveFlow(trigger));
+  }
+
+  getInstructionForFlow(trigger) {
+    const flow = this.getActiveFlow(trigger);
+    const instructions = [this.systemPrompt, this.agentPrompt, flow?.instructions].filter(Boolean).join('\n\n');
+    return { flow, instructions };
   }
 
   get isReady() {
@@ -100,7 +121,7 @@ export class GeminiClient {
     };
   }
 
-  async generateReply({ text, contactName, history = [] }) {
+  async generateReply({ text, contactName, history = [], trigger = 'inbound' }) {
     if (!this.isReady) {
       throw new Error('Gemini não configurado.');
     }
@@ -112,6 +133,10 @@ export class GeminiClient {
 
     const url = `${GEMINI_ENDPOINT}/models/${this.model}:generateContent`;
     const historyText = formatHistoryForPrompt(history);
+    const { flow, instructions } = this.getInstructionForFlow(trigger);
+    if (!flow) {
+      throw new Error('Nenhum fluxo ativo foi configurado para esta entrada.');
+    }
     const requestReply = async ({ instruction, maxOutputTokens = 512, temperature = 0.35 }) => {
       const response = await fetch(url, {
         method: 'POST',
@@ -121,7 +146,7 @@ export class GeminiClient {
         },
         body: JSON.stringify({
           system_instruction: {
-            parts: [{ text: this.systemPrompt }],
+            parts: [{ text: instructions }],
           },
           contents: [
             {
@@ -158,7 +183,7 @@ export class GeminiClient {
 
     let result = await requestReply({
       instruction:
-        'Responda pelo Gemini em no máximo 320 caracteres, com até 3 frases completas. Termine sempre com ponto ou pergunta. Não fuja do fluxo pré-estabelecido: interprete a mensagem e conduza para a próxima etapa prevista, sem criar etapas, promessas ou alternativas fora do funil. Se for primeiro contato, apresente a Cresce Mais Consultoria Financeira e ofereça as opções: 1 CPF, 2 CNPJ, 3 entender como funciona.',
+          `Você está executando o fluxo "${flow.name}". Responda em no máximo 320 caracteres, com até 3 frases completas. Termine sempre com ponto ou pergunta. Siga as instruções do fluxo e não adicione regras próprias.`,
     });
 
     if (!result.reply) {
@@ -179,6 +204,52 @@ export class GeminiClient {
     }
 
     return result.reply;
+  }
+
+  async generateProspectingMessage({ company, contactName, fallback }) {
+    if (!this.isReady) {
+      return null;
+    }
+
+    const { flow, instructions } = this.getInstructionForFlow('prospecting');
+    if (!flow) {
+      return null;
+    }
+
+    const url = `${GEMINI_ENDPOINT}/models/${this.model}:generateContent`;
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': this.apiKey,
+      },
+      body: JSON.stringify({
+        system_instruction: {
+          parts: [{ text: instructions }],
+        },
+        contents: [
+          {
+            parts: [
+              {
+                text: `Você está executando o fluxo "${flow.name}". Crie somente a mensagem inicial de WhatsApp para este contato, sem explicações externas.\nNome: ${contactName || 'não informado'}\nEmpresa: ${company || 'não informada'}\nModelo opcional do administrador: ${cleanText(fallback) || 'nenhum'}`,
+              },
+            ],
+          },
+        ],
+        generationConfig: {
+          temperature: 0.45,
+          topP: 0.9,
+          maxOutputTokens: 320,
+        },
+      }),
+    });
+
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload?.error?.message || `Gemini retornou HTTP ${response.status}.`);
+    }
+
+    return cleanText(extractGeminiText(payload));
   }
 
   async answerFlowQuestion({ context = {}, contactName, history = [], text }) {

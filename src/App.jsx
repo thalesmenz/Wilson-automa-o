@@ -10,6 +10,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Clock3,
+  ListPlus,
   MessageCircle,
   PauseCircle,
   PieChart,
@@ -24,6 +25,7 @@ import {
   Unlink,
   UserCheck,
   Wifi,
+  Workflow,
   X,
 } from 'lucide-react';
 
@@ -60,6 +62,14 @@ const VIEWS = {
   followups: {
     eyebrow: 'Agenda',
     title: 'Follow-ups',
+  },
+  outreach: {
+    eyebrow: 'Prospecção',
+    title: 'Prospecção',
+  },
+  agent: {
+    eyebrow: 'Automação',
+    title: 'Agente e fluxos',
   },
 };
 
@@ -373,6 +383,15 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [qrModalOpen, setQrModalOpen] = useState(false);
   const [sendingMessage, setSendingMessage] = useState(false);
+  const [outreach, setOutreach] = useState({ contacts: [], counts: {}, intervalMinutes: 1, message: '', status: 'idle' });
+  const [outreachDraft, setOutreachDraft] = useState({ name: '', company: '', phone: '' });
+  const [outreachMessage, setOutreachMessage] = useState('');
+  const [outreachInterval, setOutreachInterval] = useState(1);
+  const [outreachBusy, setOutreachBusy] = useState(false);
+  const [agent, setAgent] = useState({ flows: [], prompt: '' });
+  const [agentPrompt, setAgentPrompt] = useState('');
+  const [agentFlowDraft, setAgentFlowDraft] = useState({ active: true, instructions: '', name: '', trigger: 'inbound' });
+  const [agentBusy, setAgentBusy] = useState(false);
   const messagesEndRef = useRef(null);
 
   const whatsappProvider = status.provider || {};
@@ -493,12 +512,14 @@ export default function App() {
   }, [activity]);
 
   async function refreshDashboard() {
-    const [summaryPayload, leadsPayload, followupsPayload, conversationsPayload, appointmentsPayload] = await Promise.all([
+    const [summaryPayload, leadsPayload, followupsPayload, conversationsPayload, appointmentsPayload, outreachPayload, agentPayload] = await Promise.all([
       request('/api/dashboard/summary'),
       request('/api/leads'),
       request('/api/followups'),
       request('/api/conversations'),
       request('/api/appointments').catch(() => ({ appointments: [] })),
+      request('/api/outreach').catch(() => ({ contacts: [], counts: {}, intervalMinutes: 1, message: '', status: 'idle' })),
+      request('/api/agent').catch(() => ({ flows: [], prompt: '' })),
     ]);
 
     setSummary({ ...EMPTY_SUMMARY, ...(summaryPayload || {}) });
@@ -506,6 +527,11 @@ export default function App() {
     setFollowups(followupsPayload || { recent: [], upcoming: [] });
     setConversations(conversationsPayload && typeof conversationsPayload === 'object' ? conversationsPayload : {});
     setAppointments(Array.isArray(appointmentsPayload?.appointments) ? appointmentsPayload.appointments : []);
+    setOutreach(outreachPayload || { contacts: [], counts: {}, intervalMinutes: 1, message: '', status: 'idle' });
+    setOutreachMessage(outreachPayload?.message || '');
+    setOutreachInterval(outreachPayload?.intervalMinutes || 1);
+    setAgent(agentPayload || { flows: [], prompt: '' });
+    setAgentPrompt(agentPayload?.prompt || '');
   }
 
   useEffect(() => {
@@ -520,6 +546,15 @@ export default function App() {
       setStatus((current) => ({ ...current, ...payload, status: 'qr' }));
     });
     socket.on('activity:init', setActivity);
+    socket.on('outreach', (payload) => {
+      setOutreach(payload || { contacts: [], counts: {}, intervalMinutes: 1, message: '', status: 'idle' });
+      setOutreachMessage((current) => (current === '' ? payload?.message || '' : current));
+      setOutreachInterval(payload?.intervalMinutes || 1);
+    });
+    socket.on('agent', (payload) => {
+      setAgent(payload || { flows: [], prompt: '' });
+      setAgentPrompt(payload?.prompt || '');
+    });
     socket.on('conversations', (payload) => {
       setConversations(payload && typeof payload === 'object' ? payload : {});
       refreshDashboard().catch(() => null);
@@ -707,6 +742,178 @@ export default function App() {
       });
       setConversations((current) => ({ ...current, [payload.jid]: payload }));
     }, aiPaused ? 'IA pausada nesta conversa.' : 'IA retomada nesta conversa.');
+  }
+
+  async function saveOutreachMessage(event) {
+    event.preventDefault();
+    setOutreachBusy(true);
+    setNotice('');
+
+    try {
+      const payload = await request('/api/outreach/message', {
+        method: 'PUT',
+        body: JSON.stringify({ message: outreachMessage }),
+      });
+      setOutreach(payload);
+      setNotice('Mensagem de prospecção salva.');
+    } catch (error) {
+      setNotice(error.message);
+    } finally {
+      setOutreachBusy(false);
+    }
+  }
+
+  async function saveOutreachInterval(event) {
+    event.preventDefault();
+    setOutreachBusy(true);
+    setNotice('');
+
+    try {
+      const payload = await request('/api/outreach/interval', {
+        method: 'PUT',
+        body: JSON.stringify({ intervalMinutes: Number(outreachInterval) }),
+      });
+      setOutreach(payload);
+      setOutreachInterval(payload.intervalMinutes);
+      setNotice(`Intervalo definido: uma chamada a cada ${payload.intervalMinutes} minuto${payload.intervalMinutes === 1 ? '' : 's'}.`);
+    } catch (error) {
+      setNotice(error.message);
+    } finally {
+      setOutreachBusy(false);
+    }
+  }
+
+  async function addOutreachContact(event) {
+    event.preventDefault();
+    setOutreachBusy(true);
+    setNotice('');
+
+    try {
+      const payload = await request('/api/outreach/contacts', {
+        method: 'POST',
+        body: JSON.stringify(outreachDraft),
+      });
+      setOutreach(payload);
+      setOutreachDraft({ name: '', company: '', phone: '' });
+      setNotice('Contato adicionado à lista.');
+    } catch (error) {
+      setNotice(error.message);
+    } finally {
+      setOutreachBusy(false);
+    }
+  }
+
+  async function removeOutreachContact(id) {
+    setOutreachBusy(true);
+    setNotice('');
+
+    try {
+      const payload = await request(`/api/outreach/contacts/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      setOutreach(payload);
+    } catch (error) {
+      setNotice(error.message);
+    } finally {
+      setOutreachBusy(false);
+    }
+  }
+
+  async function toggleOutreach() {
+    setOutreachBusy(true);
+    setNotice('');
+
+    try {
+      const isRunning = outreach.status === 'running';
+      const payload = await request(isRunning ? '/api/outreach/pause' : '/api/outreach/start', {
+        method: 'POST',
+        body: isRunning ? undefined : JSON.stringify({ retryFailed: outreach.counts?.failed > 0 }),
+      });
+      setOutreach(payload);
+      setNotice(isRunning ? 'Prospecção pausada. Os contatos pendentes permanecem na fila.' : 'Prospecção iniciada. Os contatos serão chamados um por vez.');
+    } catch (error) {
+      setNotice(error.message);
+    } finally {
+      setOutreachBusy(false);
+    }
+  }
+
+  async function saveAgentPrompt(event) {
+    event.preventDefault();
+    setAgentBusy(true);
+    setNotice('');
+
+    try {
+      const payload = await request('/api/agent/prompt', {
+        method: 'PUT',
+        body: JSON.stringify({ prompt: agentPrompt }),
+      });
+      setAgent(payload);
+      setNotice('Prompt principal do agente salvo.');
+    } catch (error) {
+      setNotice(error.message);
+    } finally {
+      setAgentBusy(false);
+    }
+  }
+
+  async function createAgentFlow(event) {
+    event.preventDefault();
+    setAgentBusy(true);
+    setNotice('');
+
+    try {
+      const payload = await request('/api/agent/flows', {
+        method: 'POST',
+        body: JSON.stringify(agentFlowDraft),
+      });
+      setAgent(payload);
+      setAgentFlowDraft({ active: true, instructions: '', name: '', trigger: 'inbound' });
+      setNotice('Fluxo criado e pronto para uso.');
+    } catch (error) {
+      setNotice(error.message);
+    } finally {
+      setAgentBusy(false);
+    }
+  }
+
+  function changeAgentFlow(id, changes) {
+    setAgent((current) => ({
+      ...current,
+      flows: (current.flows || []).map((flow) => (flow.id === id ? { ...flow, ...changes } : flow)),
+    }));
+  }
+
+  async function saveAgentFlow(event, flow) {
+    event.preventDefault();
+    setAgentBusy(true);
+    setNotice('');
+
+    try {
+      const payload = await request(`/api/agent/flows/${encodeURIComponent(flow.id)}`, {
+        method: 'PUT',
+        body: JSON.stringify(flow),
+      });
+      setAgent(payload);
+      setNotice(`Fluxo "${flow.name}" atualizado.`);
+    } catch (error) {
+      setNotice(error.message);
+    } finally {
+      setAgentBusy(false);
+    }
+  }
+
+  async function deleteAgentFlow(id) {
+    setAgentBusy(true);
+    setNotice('');
+
+    try {
+      const payload = await request(`/api/agent/flows/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      setAgent(payload);
+      setNotice('Fluxo removido.');
+    } catch (error) {
+      setNotice(error.message);
+    } finally {
+      setAgentBusy(false);
+    }
   }
 
   function getProviderStatusMeta(provider) {
@@ -1277,6 +1484,226 @@ export default function App() {
     );
   }
 
+  function renderOutreach() {
+    const contacts = outreach.contacts || [];
+    const counts = outreach.counts || {};
+    const isRunning = outreach.status === 'running';
+    const statusLabel = isRunning ? 'Em andamento' : outreach.status === 'completed' ? 'Concluída' : outreach.status === 'paused' ? 'Pausada' : 'Pronta para iniciar';
+
+    return (
+      <section className="outreach-page">
+        <article className="panel outreach-intro">
+          <div>
+            <span className="eyebrow">Disparo individual</span>
+            <h2>Chamadas de prospecção pelo WhatsApp</h2>
+            <p>Cadastre os contatos e inicie quando estiver pronto. Cada mensagem é enviada uma por vez, usando as pausas e limites de segurança do canal conectado.</p>
+          </div>
+          <div className="outreach-progress" aria-label="Resumo da lista">
+            <span><strong>{contacts.length}</strong> contatos</span>
+            <span><strong>{counts.sent || 0}</strong> enviados</span>
+            <span><strong>{counts.failed || 0}</strong> falharam</span>
+          </div>
+        </article>
+
+        <article className="panel outreach-timing">
+          <div>
+            <span className="eyebrow">Ritmo da prospecção</span>
+            <h2>Intervalo entre as chamadas</h2>
+            <p>O primeiro contato é chamado imediatamente ao iniciar; os próximos seguem este intervalo.</p>
+          </div>
+          <form className="outreach-interval-form" onSubmit={saveOutreachInterval}>
+            <label htmlFor="outreach-interval">Chamar a cada</label>
+            <input id="outreach-interval" type="number" min="1" max="1440" step="1" value={outreachInterval} onChange={(event) => setOutreachInterval(event.target.value)} disabled={outreachBusy || isRunning} />
+            <span>minutos</span>
+            <button type="submit" disabled={outreachBusy || isRunning}>Salvar intervalo</button>
+          </form>
+        </article>
+
+        {isMetaProvider ? <p className="outreach-warning">No WhatsApp Oficial Meta, a primeira mensagem para um contato só pode ser enviada por um template aprovado. Para esta lista de texto livre, use o canal WhatsApp via QR.</p> : null}
+
+        <div className="outreach-grid">
+          <article className="panel">
+            <div className="panel-header">
+              <div>
+                <span className="eyebrow">1. Mensagem</span>
+                <h2>Mensagem de abertura</h2>
+              </div>
+              <MessageCircle size={20} />
+            </div>
+            <form className="outreach-form" onSubmit={saveOutreachMessage}>
+              <textarea
+                value={outreachMessage}
+                onChange={(event) => setOutreachMessage(event.target.value)}
+                placeholder="Olá, {{nome}}! Tudo bem?"
+                rows={7}
+                disabled={outreachBusy || isRunning}
+              />
+              <p className="form-hint">Use <code>{'{{nome}}'}</code> e <code>{'{{empresa}}'}</code> para personalizar a mensagem. Se o campo estiver vazio, será usado um texto neutro.</p>
+              <button type="submit" disabled={outreachBusy || isRunning}>
+                Salvar mensagem
+              </button>
+            </form>
+          </article>
+
+          <article className="panel">
+            <div className="panel-header">
+              <div>
+                <span className="eyebrow">2. Contatos</span>
+                <h2>Adicionar à lista</h2>
+              </div>
+              <ListPlus size={20} />
+            </div>
+            <form className="outreach-form" onSubmit={addOutreachContact}>
+              <label>Nome
+                <input value={outreachDraft.name} onChange={(event) => setOutreachDraft((current) => ({ ...current, name: event.target.value }))} placeholder="Ex.: Maria Silva" disabled={outreachBusy || isRunning} />
+              </label>
+              <label>Empresa
+                <input value={outreachDraft.company} onChange={(event) => setOutreachDraft((current) => ({ ...current, company: event.target.value }))} placeholder="Ex.: Empresa Ltda." disabled={outreachBusy || isRunning} />
+              </label>
+              <label>Telefone <small>obrigatório</small>
+                <input value={outreachDraft.phone} onChange={(event) => setOutreachDraft((current) => ({ ...current, phone: event.target.value }))} placeholder="5511999999999" inputMode="tel" required disabled={outreachBusy || isRunning} />
+              </label>
+              <button type="submit" disabled={outreachBusy || isRunning}>Adicionar contato</button>
+            </form>
+          </article>
+        </div>
+
+        <article className="panel outreach-list-panel">
+          <div className="panel-header outreach-list-header">
+            <div>
+              <span className="eyebrow">3. Envio</span>
+              <h2>Fila de prospecção</h2>
+              <p className="outreach-status">{statusLabel} · a cada {outreach.intervalMinutes || 1} minuto{(outreach.intervalMinutes || 1) === 1 ? '' : 's'}</p>
+            </div>
+            <button type="button" className={isRunning ? 'danger' : 'primary-action'} disabled={outreachBusy || (!isRunning && !connected)} onClick={toggleOutreach}>
+              {isRunning ? <PauseCircle size={18} /> : <PlayCircle size={18} />}
+              {isRunning ? 'Pausar lista' : 'Iniciar lista'}
+            </button>
+          </div>
+          {!connected ? <p className="outreach-warning">Conecte o WhatsApp para iniciar o envio.</p> : null}
+          <div className="outreach-contacts">
+            {contacts.length ? contacts.map((contact) => (
+              <div className="outreach-contact" key={contact.id}>
+                <div>
+                  <strong>{contact.name || contact.phone}</strong>
+                  <span>{contact.company ? `${contact.company} · ` : ''}{contact.phone}</span>
+                  {contact.error ? <small className="error-text">{contact.error}</small> : null}
+                </div>
+                <div className="outreach-contact-actions">
+                  <Tag type={contact.status === 'sent' ? 'meeting' : contact.status === 'failed' ? 'discarded' : 'neutral'}>{contact.status === 'sent' ? 'enviado' : contact.status === 'failed' ? 'falhou' : contact.status === 'processing' ? 'enviando' : 'aguardando'}</Tag>
+                  <button type="button" className="icon-button" aria-label={`Remover ${contact.name || contact.phone}`} disabled={outreachBusy || isRunning} onClick={() => removeOutreachContact(contact.id)}>
+                    <Trash2 size={17} />
+                  </button>
+                </div>
+              </div>
+            )) : <p className="empty-state">Nenhum contato na lista ainda.</p>}
+          </div>
+        </article>
+      </section>
+    );
+  }
+
+  function renderAgent() {
+    const flows = agent.flows || [];
+
+    return (
+      <section className="agent-page">
+        <article className="panel agent-intro">
+          <div>
+            <span className="eyebrow">IA configurável</span>
+            <h2>Você define como o agente trabalha</h2>
+            <p>O prompt principal define a personalidade e as regras gerais. Cada fluxo define o que a IA deve fazer em uma situação específica.</p>
+          </div>
+          <div className="agent-intro-tags">
+            <span><strong>{flows.filter((flow) => flow.active).length}</strong> fluxos ativos</span>
+            <span><strong>{flows.filter((flow) => flow.trigger === 'inbound').length}</strong> entrada</span>
+            <span><strong>{flows.filter((flow) => flow.trigger === 'prospecting').length}</strong> prospecção</span>
+          </div>
+        </article>
+
+        <div className="agent-grid">
+          <article className="panel">
+            <div className="panel-header">
+              <div>
+                <span className="eyebrow">Prompt principal</span>
+                <h2>Instruções gerais do agente</h2>
+              </div>
+              <Bot size={20} />
+            </div>
+            <form className="agent-form" onSubmit={saveAgentPrompt}>
+              <textarea value={agentPrompt} onChange={(event) => setAgentPrompt(event.target.value)} rows={10} placeholder="Ex.: Você representa minha empresa. Fale de forma direta, consultiva e use português do Brasil." disabled={agentBusy} />
+              <p className="form-hint">Esse texto vale para todos os fluxos. Escreva aqui tom de voz, regras, produto e tudo que a IA precisa saber sempre.</p>
+              <button type="submit" className="primary-action" disabled={agentBusy}>Salvar prompt</button>
+            </form>
+          </article>
+
+          <article className="panel">
+            <div className="panel-header">
+              <div>
+                <span className="eyebrow">Novo fluxo</span>
+                <h2>Criar uma automação da IA</h2>
+              </div>
+              <Workflow size={20} />
+            </div>
+            <form className="agent-form" onSubmit={createAgentFlow}>
+              <label>Nome do fluxo
+                <input value={agentFlowDraft.name} onChange={(event) => setAgentFlowDraft((current) => ({ ...current, name: event.target.value }))} placeholder="Ex.: Atendimento inicial" disabled={agentBusy} required />
+              </label>
+              <label>Quando usar
+                <select value={agentFlowDraft.trigger} onChange={(event) => setAgentFlowDraft((current) => ({ ...current, trigger: event.target.value }))} disabled={agentBusy}>
+                  <option value="inbound">Quando a pessoa entra em contato</option>
+                  <option value="prospecting">Quando eu inicio a prospecção</option>
+                </select>
+              </label>
+              <label>Instruções do fluxo
+                <textarea value={agentFlowDraft.instructions} onChange={(event) => setAgentFlowDraft((current) => ({ ...current, instructions: event.target.value }))} rows={6} placeholder="Explique para a IA o objetivo, a sequência da conversa e o que ela pode ou não pode fazer." disabled={agentBusy} required />
+              </label>
+              <label className="checkbox-field"><input type="checkbox" checked={agentFlowDraft.active} onChange={(event) => setAgentFlowDraft((current) => ({ ...current, active: event.target.checked }))} disabled={agentBusy} /> Ativar este fluxo assim que salvar</label>
+              <button type="submit" disabled={agentBusy}>Criar fluxo</button>
+            </form>
+          </article>
+        </div>
+
+        <article className="panel">
+          <div className="panel-header">
+            <div>
+              <span className="eyebrow">Fluxos criados</span>
+              <h2>Editar os comportamentos da IA</h2>
+            </div>
+            <Workflow size={20} />
+          </div>
+          <div className="agent-flow-list">
+            {flows.length ? flows.map((flow) => (
+              <form className="agent-flow-card" key={flow.id} onSubmit={(event) => saveAgentFlow(event, flow)}>
+                <div className="agent-flow-heading">
+                  <label>Nome
+                    <input value={flow.name} onChange={(event) => changeAgentFlow(flow.id, { name: event.target.value })} disabled={agentBusy} required />
+                  </label>
+                  <label>Gatilho
+                    <select value={flow.trigger} onChange={(event) => changeAgentFlow(flow.id, { trigger: event.target.value })} disabled={agentBusy}>
+                      <option value="inbound">Entrada de contato</option>
+                      <option value="prospecting">Prospecção</option>
+                    </select>
+                  </label>
+                </div>
+                <label>Instruções
+                  <textarea value={flow.instructions} onChange={(event) => changeAgentFlow(flow.id, { instructions: event.target.value })} rows={6} disabled={agentBusy} required />
+                </label>
+                <div className="agent-flow-actions">
+                  <label className="checkbox-field"><input type="checkbox" checked={flow.active} onChange={(event) => changeAgentFlow(flow.id, { active: event.target.checked })} disabled={agentBusy} /> Fluxo ativo</label>
+                  <div>
+                    <button type="button" className="danger" disabled={agentBusy} onClick={() => deleteAgentFlow(flow.id)}><Trash2 size={17} /> Excluir</button>
+                    <button type="submit" className="primary-action" disabled={agentBusy}>Salvar fluxo</button>
+                  </div>
+                </div>
+              </form>
+            )) : <p className="empty-state">Nenhum fluxo criado. Comece pelo fluxo de entrada ou pelo de prospecção.</p>}
+          </div>
+        </article>
+      </section>
+    );
+  }
+
   return (
     <main className="app-shell">
       <aside className="sidebar">
@@ -1309,6 +1736,14 @@ export default function App() {
           <button type="button" className={activeView === 'followups' ? 'active' : ''} onClick={() => setActiveView('followups')}>
             <Clock3 size={18} />
             Follow-ups
+          </button>
+          <button type="button" className={activeView === 'outreach' ? 'active' : ''} onClick={() => setActiveView('outreach')}>
+            <ListPlus size={18} />
+            Prospecção
+          </button>
+          <button type="button" className={activeView === 'agent' ? 'active' : ''} onClick={() => setActiveView('agent')}>
+            <Workflow size={18} />
+            Agente e fluxos
           </button>
         </nav>
 
@@ -1346,6 +1781,8 @@ export default function App() {
         {activeView === 'connections' ? renderConnections() : null}
         {activeView === 'appointments' ? renderAppointments() : null}
         {activeView === 'followups' ? renderFollowups() : null}
+        {activeView === 'outreach' ? renderOutreach() : null}
+        {activeView === 'agent' ? renderAgent() : null}
       </section>
 
       {qrModalOpen && !isMetaProvider ? (
