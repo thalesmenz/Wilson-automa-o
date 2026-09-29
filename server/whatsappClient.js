@@ -1140,8 +1140,8 @@ export class WhatsAppClient extends EventEmitter {
       },
       ai: this.gemini?.getStatus?.() || { enabled: false, model: null, provider: 'Gemini' },
       calendar: this.calendar?.getStatus?.() || { enabled: false, provider: 'Google Calendar' },
-      persistence: this.appointmentStore?.getStatus?.() || { enabled: false, provider: 'Supabase' },
-      followups: this.reminderWorker?.getStatus?.() || { enabled: false, provider: 'Supabase' },
+      persistence: this.appointmentStore?.getStatus?.() || { enabled: false, provider: 'Neon' },
+      followups: this.reminderWorker?.getStatus?.() || { enabled: false, provider: 'Neon' },
     };
   }
 

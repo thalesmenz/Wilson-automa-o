@@ -55,10 +55,3 @@ create index if not exists whatsapp_events_created_idx
 create index if not exists whatsapp_events_type_created_idx
   on public.whatsapp_events (type, created_at desc);
 
-alter table public.whatsapp_appointments enable row level security;
-alter table public.whatsapp_conversations enable row level security;
-alter table public.whatsapp_events enable row level security;
-
-grant all on public.whatsapp_appointments to service_role;
-grant all on public.whatsapp_conversations to service_role;
-grant all on public.whatsapp_events to service_role;

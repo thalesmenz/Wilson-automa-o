@@ -1,4 +1,6 @@
-const DEFAULT_TABLE = process.env.SUPABASE_APPOINTMENTS_TABLE || 'whatsapp_appointments';
+import { quoteIdentifier } from './database.js';
+
+const DEFAULT_TABLE = process.env.DB_APPOINTMENTS_TABLE || 'whatsapp_appointments';
 
 function addHours(date, hours) {
   return new Date(date.getTime() + Number(hours || 0) * 60 * 60 * 1000);
@@ -83,27 +85,28 @@ function fromAppointmentRow(row) {
 
 export class AppointmentStore {
   constructor({
+    database,
     dayReminderTime = process.env.FOLLOWUP_DAY_REMINDER_TIME || '08:00',
     enabled = process.env.FOLLOWUP_ENABLED !== 'false',
     lookaheadHours = process.env.FOLLOWUP_LOOKAHEAD_HOURS || 36,
-    supabase,
     table = DEFAULT_TABLE,
     timeZone = process.env.GOOGLE_CALENDAR_TIME_ZONE || 'America/Sao_Paulo',
   } = {}) {
+    this.database = database;
     this.dayReminderMinutes = parseTimeToMinutes(dayReminderTime);
     this.enabled = enabled;
     this.lookaheadHours = Number(lookaheadHours || 36);
-    this.supabase = supabase;
     this.table = table;
+    this.tableSql = quoteIdentifier(table);
     this.timeZone = timeZone;
   }
 
   get isReady() {
-    return Boolean(this.enabled && this.supabase?.isReady);
+    return Boolean(this.enabled && this.database?.isReady);
   }
 
   get isConfigured() {
-    return Boolean(this.supabase?.isReady);
+    return Boolean(this.database?.isReady);
   }
 
   getStatus() {
@@ -111,7 +114,7 @@ export class AppointmentStore {
       active: this.enabled,
       configured: this.isConfigured,
       enabled: this.isReady,
-      provider: 'Supabase',
+      provider: 'Neon',
       table: this.table,
     };
   }
@@ -121,26 +124,23 @@ export class AppointmentStore {
     return this.getStatus();
   }
 
-  getClient() {
-    return this.supabase.getClient();
-  }
-
   async saveAppointment(appointment) {
     if (!this.isConfigured) {
       return null;
     }
 
-    const { data, error } = await this.getClient()
-      .from(this.table)
-      .upsert(toAppointmentRow(appointment), { onConflict: 'event_id' })
-      .select()
-      .single();
+    const row = toAppointmentRow(appointment);
+    const columns = Object.keys(row);
+    const updates = columns.filter((column) => column !== 'event_id').map((column) => `${column} = excluded.${column}`);
+    const [saved] = await this.database.query(
+      `insert into ${this.tableSql} (${columns.join(', ')})
+       values (${columns.map((_, index) => `$${index + 1}`).join(', ')})
+       on conflict (event_id) do update set ${updates.join(', ')}
+       returning *`,
+      columns.map((column) => row[column]),
+    );
 
-    if (error) {
-      throw error;
-    }
-
-    return fromAppointmentRow(data);
+    return fromAppointmentRow(saved);
   }
 
   async listAppointments({ excludeDemo = false, from, limit = 250, status, to } = {}) {
@@ -149,38 +149,41 @@ export class AppointmentStore {
     }
 
     const safeLimit = Math.min(Math.max(Number(limit) || 250, 1), 500);
-    let query = this.getClient()
-      .from(this.table)
-      .select('*')
-      .order('start_datetime', { ascending: true })
-      .limit(safeLimit);
+    const conditions = [];
+    const params = [];
 
     if (status && status !== 'all') {
-      query = query.eq('status', status);
+      params.push(status);
+      conditions.push(`status = $${params.length}`);
     }
 
     if (excludeDemo) {
-      query = query.not('event_id', 'like', 'demo-%');
+      conditions.push(`event_id not like 'demo-%'`);
     }
 
     const fromIso = toIsoDateFilter(from);
     const toIso = toIsoDateFilter(to);
 
     if (fromIso) {
-      query = query.gte('start_datetime', fromIso);
+      params.push(fromIso);
+      conditions.push(`start_datetime >= $${params.length}`);
     }
 
     if (toIso) {
-      query = query.lte('start_datetime', toIso);
+      params.push(toIso);
+      conditions.push(`start_datetime <= $${params.length}`);
     }
 
-    const { data, error } = await query;
+    params.push(safeLimit);
+    const rows = await this.database.query(
+      `select * from ${this.tableSql}
+       ${conditions.length ? `where ${conditions.join(' and ')}` : ''}
+       order by start_datetime asc
+       limit $${params.length}`,
+      params,
+    );
 
-    if (error) {
-      throw error;
-    }
-
-    return data.map(fromAppointmentRow);
+    return rows.map(fromAppointmentRow);
   }
 
   async listUpcomingAppointments(now = new Date()) {
@@ -189,20 +192,15 @@ export class AppointmentStore {
     }
 
     const maxDate = addHours(now, this.lookaheadHours);
-    const { data, error } = await this.getClient()
-      .from(this.table)
-      .select('*')
-      .eq('status', 'scheduled')
-      .gte('start_datetime', now.toISOString())
-      .lte('start_datetime', maxDate.toISOString())
-      .order('start_datetime', { ascending: true })
-      .limit(250);
+    const rows = await this.database.query(
+      `select * from ${this.tableSql}
+       where status = 'scheduled' and start_datetime >= $1 and start_datetime <= $2
+       order by start_datetime asc
+       limit 250`,
+      [now.toISOString(), maxDate.toISOString()],
+    );
 
-    if (error) {
-      throw error;
-    }
-
-    return data.map(fromAppointmentRow);
+    return rows.map(fromAppointmentRow);
   }
 
   async listDueReminders(now = new Date()) {
@@ -237,20 +235,15 @@ export class AppointmentStore {
       return null;
     }
 
-    const { data, error } = await this.getClient()
-      .from(this.table)
-      .select('*')
-      .eq('jid', jid)
-      .eq('status', 'scheduled')
-      .gte('start_datetime', now.toISOString())
-      .order('start_datetime', { ascending: true })
-      .limit(1);
+    const [row] = await this.database.query(
+      `select * from ${this.tableSql}
+       where jid = $1 and status = 'scheduled' and start_datetime >= $2
+       order by start_datetime asc
+       limit 1`,
+      [jid, now.toISOString()],
+    );
 
-    if (error) {
-      throw error;
-    }
-
-    return data?.[0] ? fromAppointmentRow(data[0]) : null;
+    return row ? fromAppointmentRow(row) : null;
   }
 
   async markCancelled(id, cancelledAt = new Date()) {
@@ -258,21 +251,16 @@ export class AppointmentStore {
       return null;
     }
 
-    const { data, error } = await this.getClient()
-      .from(this.table)
-      .update({
-        status: 'cancelled',
-        updated_at: cancelledAt.toISOString(),
-      })
-      .eq('id', id)
-      .select()
-      .single();
+    const [row] = await this.database.query(
+      `update ${this.tableSql} set status = 'cancelled', updated_at = $2 where id = $1 returning *`,
+      [id, cancelledAt.toISOString()],
+    );
 
-    if (error) {
-      throw error;
+    if (!row) {
+      throw new Error(`Agendamento ${id} nao encontrado.`);
     }
 
-    return fromAppointmentRow(data);
+    return fromAppointmentRow(row);
   }
 
   async markReminderSent(id, type, sentAt = new Date()) {
@@ -281,17 +269,10 @@ export class AppointmentStore {
     }
 
     const column = type === 'day' ? 'day_reminder_sent_at' : 'thirty_min_reminder_sent_at';
-    const { error } = await this.getClient()
-      .from(this.table)
-      .update({
-        [column]: sentAt.toISOString(),
-        updated_at: sentAt.toISOString(),
-      })
-      .eq('id', id);
-
-    if (error) {
-      throw error;
-    }
+    await this.database.query(`update ${this.tableSql} set ${column} = $2, updated_at = $2 where id = $1`, [
+      id,
+      sentAt.toISOString(),
+    ]);
 
     return true;
   }

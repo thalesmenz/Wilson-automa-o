@@ -8,10 +8,10 @@ import cors from 'cors';
 import { Server } from 'socket.io';
 import { AppointmentStore } from './appointmentStore.js';
 import { AutomationStore } from './storage.js';
+import { DatabaseService } from './database.js';
 import { GeminiClient } from './geminiClient.js';
 import { GoogleCalendarClient } from './googleCalendarClient.js';
 import { ReminderWorker } from './reminderWorker.js';
-import { SupabaseService } from './supabaseClient.js';
 import { MetaWhatsAppClient } from './metaWhatsAppClient.js';
 import { WhatsAppClient } from './whatsappClient.js';
 import { normalizeWhatsappProvider, WhatsAppProviderManager } from './whatsappProviderManager.js';
@@ -80,14 +80,14 @@ const io = new Server(server, {
   },
 });
 
-const supabase = new SupabaseService();
-const store = new AutomationStore({ dataDir: path.join(__dirname, 'data'), supabase });
+const database = new DatabaseService();
+const store = new AutomationStore({ dataDir: path.join(__dirname, 'data'), database });
 await store.ready;
 const settings = await readSettings();
 
 const appointmentStore = new AppointmentStore({
+  database,
   enabled: settings.followupsEnabled ?? process.env.FOLLOWUP_ENABLED !== 'false',
-  supabase,
 });
 const calendar = new GoogleCalendarClient();
 const gemini = new GeminiClient();
@@ -752,6 +752,7 @@ server.on('error', (error) => {
 async function shutdown() {
   reminderWorker.stop();
   await whatsapp.disconnectAll({ clearSession: false }).catch(() => null);
+  await database.close().catch(() => null);
 
   server.close(() => {
     process.exit(0);

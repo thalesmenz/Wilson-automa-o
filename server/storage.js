@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { quoteIdentifier } from './database.js';
 
 const DEFAULT_AUTOMATIONS = [
   {
@@ -26,8 +27,8 @@ const DEFAULT_AUTOMATIONS = [
     includeGroups: false,
   },
 ];
-const DEFAULT_CONVERSATIONS_TABLE = process.env.SUPABASE_CONVERSATIONS_TABLE || 'whatsapp_conversations';
-const DEFAULT_EVENTS_TABLE = process.env.SUPABASE_EVENTS_TABLE || 'whatsapp_events';
+const DEFAULT_CONVERSATIONS_TABLE = process.env.DB_CONVERSATIONS_TABLE || 'whatsapp_conversations';
+const DEFAULT_EVENTS_TABLE = process.env.DB_EVENTS_TABLE || 'whatsapp_events';
 
 function toConversationRow(conversation) {
   const lead = {
@@ -150,13 +151,13 @@ function mergeEvents(localEvents = [], remoteEvents = []) {
 }
 
 export class AutomationStore {
-  constructor({ conversationsTable = DEFAULT_CONVERSATIONS_TABLE, dataDir, eventsTable = DEFAULT_EVENTS_TABLE, supabase } = {}) {
+  constructor({ conversationsTable = DEFAULT_CONVERSATIONS_TABLE, dataDir, database, eventsTable = DEFAULT_EVENTS_TABLE } = {}) {
     this.automationsPath = path.join(dataDir, 'automations.json');
     this.conversationsPath = path.join(dataDir, 'conversations.json');
     this.eventsPath = path.join(dataDir, 'events.json');
     this.conversationsTable = conversationsTable;
     this.eventsTable = eventsTable;
-    this.supabase = supabase;
+    this.database = database;
     this.automations = [];
     this.conversations = {};
     this.events = [];
@@ -178,15 +179,11 @@ export class AutomationStore {
   }
 
   get hasRemoteStorage() {
-    return Boolean(this.supabase?.isReady);
-  }
-
-  getRemoteClient() {
-    return this.supabase.getClient();
+    return Boolean(this.database?.isReady);
   }
 
   getDashboardStorageStatus() {
-    const configured = Boolean(this.supabase?.isReady);
+    const configured = Boolean(this.database?.isReady);
 
     return {
       active: configured && !this.lastRemoteDashboardError,
@@ -196,7 +193,7 @@ export class AutomationStore {
       events: this.events.length,
       lastError: this.lastRemoteDashboardError,
       lastSyncedAt: this.lastRemoteDashboardSyncedAt,
-      provider: 'Supabase',
+      provider: 'Neon',
       tables: {
         conversations: this.conversationsTable,
         events: this.eventsTable,
@@ -205,7 +202,7 @@ export class AutomationStore {
   }
 
   async syncRemoteDashboardData() {
-    if (!this.supabase?.isReady) {
+    if (!this.database?.isReady) {
       return false;
     }
 
@@ -219,20 +216,15 @@ export class AutomationStore {
   }
 
   async loadRemoteDashboardData() {
-    if (!this.supabase?.isReady) {
+    if (!this.database?.isReady) {
       return false;
     }
 
     try {
-      const client = this.getRemoteClient();
-      const [{ data: conversations, error: conversationsError }, { data: events, error: eventsError }] = await Promise.all([
-        client.from(this.conversationsTable).select('*').order('updated_at', { ascending: false }),
-        client.from(this.eventsTable).select('*').order('created_at', { ascending: false }).limit(2500),
+      const [conversations, events] = await Promise.all([
+        this.database.query(`select * from ${quoteIdentifier(this.conversationsTable)} order by updated_at desc`),
+        this.database.query(`select * from ${quoteIdentifier(this.eventsTable)} order by created_at desc limit 2500`),
       ]);
-
-      if (conversationsError || eventsError) {
-        throw conversationsError || eventsError;
-      }
 
       const remoteConversations = Object.fromEntries((conversations || []).map((row) => [row.jid, fromConversationRow(row)]));
       const remoteEvents = (events || []).map(fromEventRow);
@@ -261,13 +253,17 @@ export class AutomationStore {
     }
 
     try {
-      const { error } = await this.getRemoteClient()
-        .from(this.conversationsTable)
-        .upsert(toConversationRow(conversation), { onConflict: 'jid' });
-
-      if (error) {
-        throw error;
-      }
+      const row = toConversationRow(conversation);
+      await this.database.query(
+        `insert into ${quoteIdentifier(this.conversationsTable)} (jid, contact_name, lead, messages, updated_at)
+         values ($1, $2, $3, $4, $5)
+         on conflict (jid) do update set
+           contact_name = excluded.contact_name,
+           lead = excluded.lead,
+           messages = excluded.messages,
+           updated_at = excluded.updated_at`,
+        [row.jid, row.contact_name, JSON.stringify(row.lead), JSON.stringify(row.messages), row.updated_at],
+      );
     } catch (error) {
       console.warn(`Falha ao salvar conversa no banco. Mantendo local: ${error.message}`);
     }
@@ -279,11 +275,32 @@ export class AutomationStore {
     }
 
     try {
-      const { error } = await this.getRemoteClient().from(this.eventsTable).upsert(toEventRow(event), { onConflict: 'id' });
-
-      if (error) {
-        throw error;
-      }
+      const row = toEventRow(event);
+      await this.database.query(
+        `insert into ${quoteIdentifier(this.eventsTable)}
+           (id, type, jid, contact_name, lead_type, lead_status, route, meta, created_at)
+         values ($1, $2, $3, $4, $5, $6, $7, $8, coalesce($9::timestamptz, now()))
+         on conflict (id) do update set
+           type = excluded.type,
+           jid = excluded.jid,
+           contact_name = excluded.contact_name,
+           lead_type = excluded.lead_type,
+           lead_status = excluded.lead_status,
+           route = excluded.route,
+           meta = excluded.meta,
+           created_at = excluded.created_at`,
+        [
+          row.id,
+          row.type,
+          row.jid,
+          row.contact_name,
+          row.lead_type,
+          row.lead_status,
+          row.route,
+          JSON.stringify(row.meta),
+          row.created_at,
+        ],
+      );
     } catch (error) {
       console.warn(`Falha ao salvar evento no banco. Mantendo local: ${error.message}`);
     }

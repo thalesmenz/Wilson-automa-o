@@ -9,3 +9,5 @@ server/sessions
 whatsapp-dashboard-preview.png
 .DS_Store
 npm-debug.log*
+.env.bak-*
+render.env.bak-*

@@ -49,10 +49,10 @@ export class ReminderWorker {
   getStatus() {
     return {
       active: Boolean(this.appointmentStore?.enabled),
-      configured: Boolean(this.appointmentStore?.supabase?.isReady),
+      configured: Boolean(this.appointmentStore?.database?.isReady),
       enabled: Boolean(this.appointmentStore?.isReady),
       intervalMs: this.intervalMs,
-      provider: 'Supabase',
+      provider: 'Neon',
       running: Boolean(this.timer),
     };
   }

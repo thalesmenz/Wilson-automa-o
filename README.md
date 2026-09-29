@@ -152,7 +152,7 @@ O bot atende de forma formal e direta para o produto Limpa Nome.
 - Para marcar, o cliente precisa aceitar a consulta paga e informar data, horario e email do convite.
 - Quando faltar data e horario, o bot consulta a agenda responsavel e oferece horarios livres antes de pedir uma sugestao aberta.
 - Se o cliente nao tiver email, o bot pode marcar uma ligacao por telefone/WhatsApp no horario escolhido, sem criar Meet, deixando nome e telefone na descricao do evento da agenda correta.
-- Se o cliente pedir para cancelar/desmarcar depois de agendado, o bot cancela o proximo agendamento futuro no Google Agenda e marca como `cancelled` no Supabase.
+- Se o cliente pedir para cancelar/desmarcar depois de agendado, o bot cancela o proximo agendamento futuro no Google Agenda e marca como `cancelled` no banco.
 
 ## Google Agenda
 
@@ -216,31 +216,33 @@ Compartilhe as agendas low e high com o email da service account. Para gerar Mee
 
 O Gemini classifica `negativado/restrito` como `low_ticket`, `rating bancario baixo` como `high_ticket` e quem nao aceita pagar a consulta como `curious`/descartado. Se vier `unknown`, o bot pergunta se o caso e negativacao ou dificuldade de aprovacao por rating bancario baixo antes de escolher a agenda.
 
-## Supabase e follow-up
+## Banco (Neon) e follow-up
 
-Para os lembretes nao dependerem do filesystem do Render, os agendamentos sao salvos no Supabase.
+Para os lembretes e o dashboard nao dependerem do filesystem do Render, agendamentos, conversas e eventos sao salvos num Postgres no Neon.
 
-1. Crie um projeto no Supabase.
-2. Abra o SQL Editor.
-3. Rode o arquivo [supabase/schema.sql](/Users/thalesmenzner/Documents/contabsquad/supabase/schema.sql).
-4. Pegue `Project URL` e `service_role key`.
-5. Configure no `.env`:
+1. Crie um projeto no Neon e copie a connection string (pooled).
+2. Crie as tabelas:
 
 ```bash
-SUPABASE_URL=https://seu-projeto.supabase.co
-SUPABASE_SERVICE_ROLE_KEY=sua_service_role_key
-SUPABASE_APPOINTMENTS_TABLE=whatsapp_appointments
+psql "$DATABASE_URL" -f db/schema.sql
+```
+
+3. Configure no `.env`:
+
+```bash
+DATABASE_URL=postgresql://usuario:senha@host-pooler.neon.tech/neondb?sslmode=verify-full&channel_binding=require
+DB_APPOINTMENTS_TABLE=whatsapp_appointments
 FOLLOWUP_ENABLED=true
 FOLLOWUP_DAY_REMINDER_TIME=08:00
 FOLLOWUP_CHECK_INTERVAL_MS=60000
 ```
 
-Quando uma reuniao e criada, o bot salva no Supabase. O worker verifica a cada minuto e envia:
+Quando uma reuniao e criada, o bot salva no banco. O worker verifica a cada minuto e envia:
 
 - confirmacao no dia da reuniao, a partir de `FOLLOWUP_DAY_REMINDER_TIME`;
 - lembrete 30 minutos antes.
 
-Se o servidor reiniciar, os agendamentos continuam no Supabase. Se o WhatsApp estiver desconectado no horario do lembrete, o envio falha e o lembrete fica pendente para uma proxima checagem.
+Se o servidor reiniciar, os agendamentos continuam no banco. Se o WhatsApp estiver desconectado no horario do lembrete, o envio falha e o lembrete fica pendente para uma proxima checagem.
 
 ## Dados locais
 
