@@ -29,7 +29,8 @@ import {
   X,
 } from 'lucide-react';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+// Em producao o Express serve o front e a API no mesmo dominio.
+const API_URL = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:3001' : '');
 const WHATSAPP_CLEAR_SESSION_CONFIRMATION = 'APAGAR_SESSAO_WHATSAPP';
 
 const STATUS_LABELS = {
